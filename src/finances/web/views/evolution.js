@@ -21,8 +21,14 @@ export async function render(root) {
       : `Total · ${signed(d.changes.total.month)} vs last month${d.changes.total.year === null ? '' : ` · ${signed(d.changes.total.year)} vs a year ago`}`),
     ...kinds.map(k => row(`${LABELS[k]}  (${signed(d.changes[k].month)} / month)`, eur(last[k]))));
 
-  const chart = card('Evolution', lineChart(series, d.rows.map(r => r.month)), legend(series),
-    note('Cash and savings are rebuilt from your transactions. Investments start when you first synced, earlier months are unknown.'));
+  const points = Math.max(...series.map(s => s.values.filter(v => v !== null).length));
+  const chart = card('Evolution',
+    points >= 2 ? lineChart(series, d.rows.map(r => r.month)) : null,
+    points >= 2 ? legend(series) : null,
+    note(points >= 2
+      ? 'Cash and savings are rebuilt from your transactions. Investments start when you first synced, earlier months are unknown.'
+      : `Not enough history for a line yet (${d.rows.length} month${d.rows.length === 1 ? '' : 's'} with data). ` +
+        'Investment balances gain one point per sync day, and cash needs its transactions: sync Santander when allowed and Trade Republic.'));
 
   const rows = showAll ? d.rows.slice().reverse() : d.rows.slice(-12).reverse();
   const table = card('Month by month', ...rows.map(r => el('div', {className: 'review'},

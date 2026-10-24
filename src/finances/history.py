@@ -56,7 +56,9 @@ def evolution(db: Database, months: int = 24, today: date | None = None) -> dict
         if day >= today.isoformat():
             return acct["balance"]
         rows = txs[acct["id"]]
-        if acct["kind"] in ("cash", "savings") and rows and day >= rows[0][0]:
+        # An account that has transactions is rebuilt from them whatever type you gave it
+        # (e.g. Trade Republic cash counted as an investment). Portfolios have none.
+        if rows and day >= rows[0][0]:
             return acct["balance"] - sum(a for d, a in rows if d > day)
         known = [b for d, b in snaps[acct["id"]] if d <= day]
         return known[-1] if known else None

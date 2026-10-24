@@ -37,6 +37,14 @@ class EvolutionTests(IsolatedHome):
         self.assertEqual(rows["2026-04"]["cash"], 900.0)   # before the May -100
         self.assertNotIn("2026-03", rows)                  # before any transaction: unknown
 
+    def test_account_with_transactions_is_rebuilt_even_if_typed_as_investment(self):
+        acct(self.db, "tr-cash", "investment", 500)
+        tx(self.db, "1", "tr-cash", "2026-04-10", 300)
+        tx(self.db, "2", "tr-cash", "2026-05-15", 200)
+        rows = {r["month"]: r for r in history.evolution(self.db, today=TODAY)["rows"]}
+        self.assertEqual(rows["2026-04"]["investment"], 300.0)
+        self.assertEqual(rows["2026-05"]["investment"], 500.0)
+
     def test_investments_known_only_from_first_snapshot(self):
         acct(self.db, "c", "cash", 100)
         tx(self.db, "1", "c", "2026-03-10", 100)
