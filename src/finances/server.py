@@ -10,7 +10,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis, categorize, config, income, recurring
+from . import analysis, categorize, config, forecast, income, recurring
 from .db import Database
 from .sync import run_sync
 
@@ -43,6 +43,12 @@ GET_ROUTES = {
         db, _q(q, "category"), _q(q, "month"), int(_num(q, "limit", 200))),
     "/api/income": lambda db, q: income.summary(db, int(_num(q, "months", 12))),
     "/api/recurring": lambda db, q: recurring.summary(db),
+    "/api/forecast": lambda db, q: forecast.project(
+        db, months=int(_num(q, "months", 24)), income_growth=_num(q, "income_growth", 0),
+        inflation=_num(q, "inflation", 2), annual_return=_num(q, "return", 4),
+        invest_share=_num(q, "invest_share", 0), extra_income=_num(q, "extra_income", 0),
+        extra_cost=_num(q, "extra_cost", 0),
+        include_other_income=_q(q, "other_income", "1") != "0"),
     "/api/review": lambda db, q: categorize.review_queue(db),
     "/api/categories": lambda db, q: categorize.all_categories(db),
     "/api/rules": lambda db, q: [dict(r) for r in db.conn.execute(
@@ -120,7 +126,7 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                 try:
                     with lock:
                         return self._json(200, route(db, urllib.parse.parse_qs(url.query)))
-                except BadRequest as e:
+                except (BadRequest, ValueError) as e:
                     return self._json(400, {"error": str(e)})
             # /callback is where the bank sends you back; the page reads the code from the address
             name = "index.html" if url.path in ("/", "/callback") else url.path.lstrip("/")

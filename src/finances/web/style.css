@@ -28,6 +28,7 @@ input.wide{width:100%;margin:2px 0 6px}
 .axis{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
 .tick{fill:var(--muted);font-size:9px}
 .line{stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
-.s0{stroke:var(--accent);background:var(--accent)}.s1{stroke:var(--good);background:var(--good)}.s2{stroke:var(--bad);background:var(--bad)}
+.s0{stroke:var(--accent);background:var(--accent)}.s1{stroke:var(--good);background:var(--good)}.s2{stroke:var(--fg);background:var(--fg)}
 .legend{display:flex;gap:14px;font-size:.8rem;color:var(--muted);flex-wrap:wrap}
 .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
+label.muted{display:flex;align-items:center;gap:8px;margin:8px 0}
