@@ -10,7 +10,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis, categorize, config
+from . import analysis, categorize, config, income, recurring
 from .db import Database
 from .sync import run_sync
 
@@ -41,6 +41,8 @@ GET_ROUTES = {
     "/api/spending": lambda db, q: analysis.spending(db, _q(q, "month")),
     "/api/transactions": lambda db, q: analysis.transactions(
         db, _q(q, "category"), _q(q, "month"), int(_num(q, "limit", 200))),
+    "/api/income": lambda db, q: income.summary(db, int(_num(q, "months", 12))),
+    "/api/recurring": lambda db, q: recurring.summary(db),
     "/api/review": lambda db, q: categorize.review_queue(db),
     "/api/categories": lambda db, q: categorize.all_categories(db),
     "/api/rules": lambda db, q: [dict(r) for r in db.conn.execute(

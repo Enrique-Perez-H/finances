@@ -3,6 +3,8 @@ import {el, post, get} from './ui.js';
 const TABS = [
   ['overview', 'Overview'],
   ['spending', 'Spending'],
+  ['income', 'Income'],
+  ['recurring', 'Recurring'],
 ];
 const loaded = {};
 let current = localStorage.getItem('tab') || 'overview';
