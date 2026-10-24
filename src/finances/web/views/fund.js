@@ -32,7 +32,7 @@ function results(f) {
   return el('div', {},
     el('div', {className: 'big', textContent: eur(f.final)}),
     note(`after ${f.years.length} years (${f.years.at(-1).year}) · ${eur(f.contributed)} contributed · ${eur(f.interest)} interest`),
-    lineChart(series, ['start', String(f.years.at(-1).year)]), legend(series),
+    lineChart(series, ['start', ...f.years.map(y => String(y.year))]), legend(series),
     f.tax > 0 ? row('After tax', eur(f.final_after_tax)) : null,
     ...(f.required_monthly !== null ? [f.target_reached
       ? el('div', {className: 'pos', textContent: 'Target reached with these assumptions.'})

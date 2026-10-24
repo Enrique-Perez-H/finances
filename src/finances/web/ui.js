@@ -42,17 +42,49 @@ const svgEl = (tag, attrs) => {
   return e;
 };
 
-// Lines: series = [{label, values, cls}], x labels shown at both ends.
-export function lineChart(series, labels = []) {
-  const W = 320, H = 120, pad = 4;
+const compact = v => new Intl.NumberFormat(undefined, {notation: 'compact', maximumFractionDigits: 1}).format(v);
+
+// Round tick values covering [min, max], about `count` of them.
+function niceTicks(min, max, count = 4) {
+  if (min === max) max = min + 1;
+  const raw = (max - min) / count, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw);
+  const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Math.round(v / step) * step);
+  return ticks;
+}
+
+// Line chart with a y axis. series = [{label, values}] (null = unknown, breaks the line).
+// Click or drag on the chart to read the values of that point in the box underneath.
+export function lineChart(series, labels = [], {format = eur} = {}) {
+  const W = 340, H = 150, L = 46, R = 8, T = 8, B = 20;
   const all = series.flatMap(s => s.values).filter(v => v !== null);
-  const max = Math.max(...all, 0), min = Math.min(...all, 0);
-  const n = Math.max(...series.map(s => s.values.length));
-  const x = i => pad + (i / Math.max(n - 1, 1)) * (W - 2 * pad);
-  const y = v => H - pad - ((v - min) / ((max - min) || 1)) * (H - 2 * pad);
-  const svg = svgEl('svg', {viewBox: `0 0 ${W} ${H + 14}`, role: 'img'});
-  if (min < 0) svg.append(svgEl('line', {x1: 0, x2: W, y1: y(0), y2: y(0), class: 'axis'}));
-  // null values (unknown months) break the line instead of being drawn as zero
+  if (!all.length) all.push(0);
+  const n = Math.max(...series.map(s => s.values.length), 1);
+  const minV = Math.min(...all), maxV = Math.max(...all);
+  // start at zero unless the values sit in a narrow band far above it
+  const ticks = niceTicks(minV >= 0 && minV < maxV * 0.5 ? 0 : minV, maxV);
+  const lo = ticks[0], hi = ticks[ticks.length - 1];
+  const x = i => L + (i / Math.max(n - 1, 1)) * (W - L - R);
+  const y = v => T + (1 - (v - lo) / ((hi - lo) || 1)) * (H - T - B);
+  const svg = svgEl('svg', {viewBox: `0 0 ${W} ${H}`, role: 'img', class: 'chart'});
+
+  ticks.forEach(t => {
+    svg.append(svgEl('line', {x1: L, x2: W - R, y1: y(t), y2: y(t), class: t === 0 ? 'axis zero' : 'axis'}));
+    const label = svgEl('text', {x: L - 5, y: y(t) + 3, 'text-anchor': 'end', class: 'tick'});
+    label.textContent = compact(t);
+    svg.append(label);
+  });
+  const xs = n <= 4 ? [...Array(n).keys()] : [0, Math.round((n - 1) / 3), Math.round(2 * (n - 1) / 3), n - 1];
+  xs.forEach(i => {
+    if (!labels[i]) return;
+    const t = svgEl('text', {x: x(i), y: H - 5, class: 'tick',
+      'text-anchor': i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'});
+    t.textContent = labels[i];
+    svg.append(t);
+  });
+
   series.forEach((s, k) => {
     let run = [];
     const flush = () => {
@@ -66,14 +98,27 @@ export function lineChart(series, labels = []) {
     s.values.forEach((v, i) => (v === null ? flush() : run.push(`${x(i)},${y(v)}`)));
     flush();
   });
-  if (labels.length) {
-    [[0, labels[0], 'start'], [n - 1, labels[labels.length - 1], 'end']].forEach(([i, text, anchor]) => {
-      const t = svgEl('text', {x: x(i), y: H + 11, 'text-anchor': anchor, class: 'tick'});
-      t.textContent = text;
-      svg.append(t);
-    });
-  }
-  return svg;
+
+  const marker = svgEl('g', {});
+  svg.append(marker);
+  const readout = el('div', {className: 'readout'});
+  const select = i => {
+    marker.replaceChildren(svgEl('line', {x1: x(i), x2: x(i), y1: T, y2: H - B, class: 'marker'}));
+    series.forEach((s, k) => s.values[i] !== null && marker.append(
+      svgEl('circle', {cx: x(i), cy: y(s.values[i]), r: 3.5, class: `dot s${k}`})));
+    readout.replaceChildren(el('strong', {textContent: labels[i] ?? `#${i + 1}`}),
+      ...series.map((s, k) => el('span', {}, el('i', {className: `sw s${k}`}), `${s.label}: `,
+        s.values[i] === null ? '–' : format(s.values[i]))));
+  };
+  const pick = ev => {
+    const rect = svg.getBoundingClientRect();
+    const px = ((ev.clientX - rect.left) / rect.width) * W;
+    select(Math.max(0, Math.min(n - 1, Math.round(((px - L) / (W - L - R)) * (n - 1)))));
+  };
+  svg.addEventListener('pointerdown', pick);
+  svg.addEventListener('pointermove', ev => { if (ev.buttons) pick(ev); });
+  select(n - 1);
+  return el('div', {className: 'chartbox'}, svg, readout);
 }
 
 export function legend(series) {

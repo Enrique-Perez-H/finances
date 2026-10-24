@@ -35,3 +35,13 @@ label.muted{display:flex;align-items:center;gap:8px;margin:8px 0}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
 .chip{background:var(--bg);color:var(--fg);border:1px solid var(--muted);padding:6px 10px;font-size:.85rem}
 .dot{stroke:none}.s0.dot{fill:var(--accent)}.s1.dot{fill:var(--good)}.s2.dot{fill:var(--fg)}.s3{stroke:var(--bad);background:var(--bad)}.s3.dot{fill:var(--bad)}
+
+.chart{touch-action:pan-y;cursor:crosshair}
+.axis{stroke:var(--muted);stroke-opacity:.35;stroke-width:1;stroke-dasharray:none}
+.axis.zero{stroke-opacity:.8}
+.marker{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+.readout{display:flex;flex-wrap:wrap;gap:4px 14px;background:var(--bg);border-radius:8px;padding:8px 10px;margin:6px 0;font-size:.85rem}
+.readout strong{width:100%}
+.ranges{display:flex;gap:6px;margin:4px 0 8px}
+.ranges button{background:var(--bg);color:var(--muted);border:1px solid var(--muted);padding:5px 12px;font-size:.85rem}
+.ranges button.on{background:var(--accent);color:#fff;border-color:var(--accent)}

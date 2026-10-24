@@ -27,9 +27,9 @@ python -m unittest discover -s tests
 
 | Tab | What it does |
 |---|---|
-| Overview | Net worth, accounts, monthly cash flow, investments |
+| Overview | Your total and its evolution per type, with range buttons (6m, 12m, 2y, since start); tap or drag the chart to read a month |
 | Spending | Spending per category per month. Entries it cannot classify are put to you in a review queue; each answer becomes a rule applied to past and future entries. You can also fix single entries. |
-| Evolution | Total per type (cash, savings, investments) over time, interest and dividends received per month, and a way to choose how each account counts |
+| Accounts | How each account counts (cash, savings, investment), interest and dividends received per month, month-by-month table |
 | Income | What you receive: salary, transfers, interest, by type, source and month |
 | Recurring | Detected recurring costs and income, monthly and yearly totals, what is coming up |
 | Forecast | Projects income, spending and wealth from your history plus assumptions you set |
