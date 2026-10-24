@@ -81,7 +81,8 @@ DEFAULT_RULES = [
     ("guarderia", "Kids", None), ("kiabi", "Kids", None), ("toysrus", "Kids", None),
     ("bizum", "Transfers sent", "Transfers received"),
     ("transferencia", "Transfers sent", "Transfers received"),
-    ("trade republic", INTERNAL, INTERNAL), ("traspaso", INTERNAL, INTERNAL),
+    ("trade republic", INTERNAL, INTERNAL), ("traderepublic", INTERNAL, INTERNAL),
+    ("trbkdebb", INTERNAL, INTERNAL), ("traspaso", INTERNAL, INTERNAL),
     ("entre cuentas", INTERNAL, INTERNAL),
     ("nomina", "Salary", "Salary"), ("payroll", "Salary", "Salary"), ("salario", "Salary", "Salary"),
     ("salary", "Salary", "Salary"), ("haberes", "Salary", "Salary"),
@@ -90,6 +91,38 @@ DEFAULT_RULES = [
     ("devolucion", "Refunds", "Refunds"), ("reembolso", "Refunds", "Refunds"),
     ("refund", "Refunds", "Refunds"),
 ]
+
+# Merchant category codes (ISO 18245) -> category, used when no keyword rule matches.
+def _mcc_ranges():
+    table = {}
+    def add(category, *codes):
+        for c in codes:
+            for code in (range(c[0], c[1] + 1) if isinstance(c, tuple) else [c]):
+                table[str(code)] = category
+    add("Groceries", 5411, 5422, 5441, 5451, 5462, 5499, 5300)
+    add("Restaurants & bars", 5811, 5812, 5813, 5814)
+    add("Fuel", 5541, 5542, 5983)
+    add("Transport", 4111, 4112, 4121, 4131, 4784, 7523, 7512, 4789)
+    add("Health", 5122, 5912, 5975, 5976, 7298, 7997, (8011, 8099))
+    add("Shopping", 5200, 5251, 5311, 5331, 5399, 5611, 5621, 5631, 5641, 5651, 5661, 5691, 5699,
+        5712, 5732, 5734, 5735, 5921, 5931, 5941, 5942, 5945, 5947, 5948, 5970, 5977, 5992, 5993,
+        5994, 5995, 5999, 5310, 5719, 5722, 5733)
+    add("Entertainment", 7829, 7832, 7841, 7911, 7922, 7929, 7932, 7933, 7941, 7991, 7992, 7993,
+        7994, 7996, 7998, 7999, 5816)
+    add("Travel", 4411, 4511, 4722, 7011, 3000, (3000, 3299), (3500, 3999), 4723, 7032, 7033)
+    add("Telecom", 4812, 4814, 4816, 4899)
+    add("Utilities", 4900, 4821)
+    add("Insurance", 6300, 6381, 6399)
+    add("Taxes", 9311, 9399, 9222, 9211)
+    add("Cash withdrawals", 6010, 6011)
+    add("Education", 8211, 8220, 8241, 8244, 8249, 8299, 8351)
+    add("Subscriptions", 5815, 5817, 5818, 5968, 5192)
+    add("Housing", 6513, 1520, 1711, 1731, 1740, 1750, 1761, 1771, 7349)
+    add("Fees & interest", 6012, 6051, 6540)
+    return table
+
+
+MCC_CATEGORIES = _mcc_ranges()
 
 _NOISE = {"compra", "tarj", "tarjeta", "con", "pago", "movil", "en", "de", "la", "el", "los",
           "recibo", "a", "favor", "concepto", "ref", "referencia", "sepa", "comercio", "del",
@@ -121,8 +154,8 @@ def _matcher(pattern: str):
     return re.compile(r"(?<![a-z0-9])" + re.escape(pattern) + tail)
 
 
-def classify(text: str, amount: float, user_rules: list[tuple[str, str]]) -> tuple[str, str]:
-    """Returns (category, source). Longest pattern wins within user rules and defaults."""
+def classify(text: str, amount: float, user_rules: list[tuple[str, str]], mcc: str = "") -> tuple[str, str]:
+    """Returns (category, source). Order: your rules, built-in keywords, merchant category code."""
     norm = normalize(text)
     for pattern, category in sorted(user_rules, key=lambda r: -len(r[0])):
         if _matcher(pattern).search(norm):
@@ -132,6 +165,9 @@ def classify(text: str, amount: float, user_rules: list[tuple[str, str]]) -> tup
             if amount >= 0:
                 return (cat_in or "Refunds"), "default"
             return cat_out, "default"
+    category = MCC_CATEGORIES.get(str(mcc or "").strip())
+    if category:
+        return ("Refunds" if amount >= 0 else category), "mcc"
     return UNCATEGORIZED, ""
 
 
@@ -140,10 +176,10 @@ def categorize_all(db: Database) -> int:
     user_rules = [(r["pattern"], r["category"]) for r in db.conn.execute("SELECT * FROM rules")]
     changed = 0
     rows = db.conn.execute(
-        "SELECT id, description, amount, category, cat_source FROM transactions"
+        "SELECT id, description, amount, category, cat_source, mcc FROM transactions"
         " WHERE cat_source != 'manual'").fetchall()
     for r in rows:
-        category, source = classify(r["description"], r["amount"], user_rules)
+        category, source = classify(r["description"], r["amount"], user_rules, r["mcc"])
         if (category, source) != (r["category"], r["cat_source"]):
             db.conn.execute("UPDATE transactions SET category=?, cat_source=? WHERE id=?",
                             (category, source, r["id"]))

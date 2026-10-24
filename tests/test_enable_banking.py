@@ -172,6 +172,23 @@ class ConnectorTests(unittest.TestCase):
         self.assertIn("401", st["enable_banking"]["error"])
         self.assertIn("Invalid JWT", st["enable_banking"]["error"])
 
+    def test_mcc_is_kept(self):
+        tx = {**FakeBank.tx("5", "DBIT", "2026-01-01", "x"), "merchant_category_code": "5411"}
+        self.assertEqual(map_transaction(tx, "acc", Counter())["mcc"], "5411")
+        self.assertEqual(map_transaction(FakeBank.tx("5", "DBIT", "2026-01-01", "x"), "acc", Counter())["mcc"], "")
+
+    def test_field_report_has_names_and_counts_but_no_values(self):
+        c, secrets = make()
+        with self.assertRaises(NeedsInput):
+            c.fetch()
+        c.fetch(user_input="C1")
+        report = c.field_report()
+        self.assertEqual(report["transactions"], 5)  # raw, pending included
+        self.assertEqual(report["fields"]["booking_date"], 5)
+        self.assertEqual(report["fields"]["debtor.name"], 1)
+        self.assertNotIn("Mercadona", json.dumps(report))
+        self.assertNotIn("20.00", json.dumps(report))
+
     def test_expired_session_asks_again(self):
         c, secrets = make()
         secrets["eb_session"] = {"session_id": "old", "accounts": [], "initial_done": True,

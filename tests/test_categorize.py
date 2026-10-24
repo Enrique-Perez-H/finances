@@ -38,6 +38,35 @@ class ClassifyTests(IsolatedHome):
         self.assertEqual(classify("MERCADONA", -20, [("mercadona", "Kids")]), ("Kids", "user"))
 
 
+class MccAndTransferTests(IsolatedHome):
+    def test_mcc_is_the_fallback_after_keywords(self):
+        self.assertEqual(classify("PAGO XYZ SL", -20, [], "5411"), ("Groceries", "mcc"))
+        self.assertEqual(classify("PAGO XYZ SL", -20, [], "5812"), ("Restaurants & bars", "mcc"))
+        self.assertEqual(classify("PAGO XYZ SL", -20, [], "3500")[0], "Travel")
+        self.assertEqual(classify("PAGO XYZ SL", -20, [], "0000"), (UNCATEGORIZED, ""))
+        self.assertEqual(classify("MERCADONA", -20, [], "5812")[0], "Groceries")  # keyword wins
+        self.assertEqual(classify("PAGO XYZ SL", -20, [("xyz", "Kids")], "5411"), ("Kids", "user"))
+
+    def test_trade_republic_variants_are_internal(self):
+        for text in ("Trade Republic Bank GmbH", "TRADEREPUBLIC", "ES TRBKDEBB transfer"):
+            self.assertEqual(classify(text, -300, [])[0], INTERNAL, text)
+
+    def test_mcc_stored_and_used_by_categorizer(self):
+        db = Database("pw")
+        db.upsert_account(dict(id="a", provider="t", name="A", kind="cash", currency="EUR",
+                               balance=0, updated_at="t"))
+        db.upsert_transaction(dict(id="1", account_id="a", date="2026-01-01", amount=-9,
+                                   description="Transaction", category="uncategorized", mcc="5541"))
+        categorize.categorize_all(db)
+        self.assertEqual(db.conn.execute("SELECT category FROM transactions").fetchone()[0], "Fuel")
+
+    def test_old_database_gets_mcc_column(self):
+        db = Database("pw")
+        db.conn.execute("ALTER TABLE transactions DROP COLUMN mcc")
+        db._migrate()
+        self.assertIn("mcc", {r["name"] for r in db.conn.execute("PRAGMA table_info(transactions)")})
+
+
 class DbFlowTests(IsolatedHome):
     def setUp(self):
         super().setUp()

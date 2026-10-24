@@ -64,6 +64,8 @@ class Database:
 
     def _migrate(self) -> None:
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(transactions)")}
+        if "mcc" not in cols:  # merchant category code from the card network, when the bank gives one
+            self.conn.execute("ALTER TABLE transactions ADD COLUMN mcc TEXT NOT NULL DEFAULT ''")
         if "cat_source" not in cols:  # '' auto/unset, 'default', 'user' (rule), 'manual' (one entry)
             self.conn.execute("ALTER TABLE transactions ADD COLUMN cat_source TEXT NOT NULL DEFAULT ''")
 
@@ -86,10 +88,10 @@ class Database:
 
     def upsert_transaction(self, t: dict) -> None:
         self.conn.execute(
-            "INSERT INTO transactions(id,account_id,date,amount,description,category)"
-            " VALUES(:id,:account_id,:date,:amount,:description,:category)"
-            " ON CONFLICT(id) DO UPDATE SET amount=:amount, description=:description",
-            t,
+            "INSERT INTO transactions(id,account_id,date,amount,description,category,mcc)"
+            " VALUES(:id,:account_id,:date,:amount,:description,:category,:mcc)"
+            " ON CONFLICT(id) DO UPDATE SET amount=:amount, description=:description, mcc=:mcc",
+            {"mcc": "", **t},
         )
 
     def replace_holdings(self, account_id: str, holdings: list[dict]) -> None:

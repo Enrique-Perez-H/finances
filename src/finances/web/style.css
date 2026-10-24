@@ -32,3 +32,5 @@ input.wide{width:100%;margin:2px 0 6px}
 .legend{display:flex;gap:14px;font-size:.8rem;color:var(--muted);flex-wrap:wrap}
 .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
 label.muted{display:flex;align-items:center;gap:8px;margin:8px 0}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.chip{background:var(--bg);color:var(--fg);border:1px solid var(--muted);padding:6px 10px;font-size:.85rem}

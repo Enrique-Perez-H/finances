@@ -100,7 +100,8 @@ def map_transaction(tx: dict, account_id: str, seen: Counter) -> dict | None:
         seen[fingerprint] += 1  # identical same-day payments must not collapse into one
         ref = hashlib.sha1(f"{fingerprint}|{seen[fingerprint]}".encode()).hexdigest()[:16]
     return dict(id=f"{account_id}-{ref}", account_id=account_id, date=date[:10],
-                amount=float(amount), description=desc[:140], category="uncategorized")
+                amount=float(amount), description=desc[:140], category="uncategorized",
+                mcc=str(tx.get("merchant_category_code") or ""))
 
 
 class EnableBankingConnector(Connector):
@@ -237,3 +238,31 @@ class EnableBankingConnector(Connector):
             raise
         session["initial_done"] = True
         return snap
+
+    def field_report(self, days: int = 45) -> dict:
+        """Which fields the bank actually fills in. Returns names and counts only, never values."""
+        session = self.secrets.get("eb_session")
+        if not (session and self._session_alive()):
+            raise RuntimeError("No valid bank session: run a sync first")
+        date_from = (self._now() - timedelta(days=days)).date().isoformat()
+        counts, total = Counter(), 0
+
+        def walk(prefix, value):
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    walk(f"{prefix}.{k}" if prefix else k, v)
+            elif value not in (None, "", [], {}):
+                counts[prefix] += 1
+
+        for acct in session["accounts"]:
+            key = None
+            while True:
+                params = {"date_from": date_from, **({"continuation_key": key} if key else {})}
+                page = self._http("GET", f"/accounts/{acct['uid']}/transactions", params=params)
+                for tx in page.get("transactions", []):
+                    total += 1
+                    walk("", tx)
+                key = page.get("continuation_key")
+                if not key:
+                    break
+        return {"transactions": total, "fields": dict(counts.most_common())}

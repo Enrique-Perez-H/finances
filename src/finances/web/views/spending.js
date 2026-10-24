@@ -1,5 +1,7 @@
 import {card, row, el, eur, eur2, pct, get, post, note, button, barRow, categoryInput} from '../ui.js';
 
+const QUICK = ['Internal transfer', 'Groceries', 'Restaurants & bars', 'Transport', 'Shopping',
+  'Subscriptions', 'Utilities', 'Health', 'Transfers sent', 'Other'];
 let month = null;
 let openCategory = null;
 
@@ -37,19 +39,21 @@ function reviewCard(review, cats, reload, unclear) {
   const items = review.slice(0, 8).map(g => {
     const pattern = el('input', {value: g.pattern, className: 'wide'});
     const cat = categoryInput(cats);
-    const apply = button('Apply', async () => {
-      if (!cat.input.value.trim()) return;
-      await post('/api/categorize', {pattern: pattern.value, category: cat.input.value});
+    const choose = async category => {
+      if (!category.trim()) return;
+      await post('/api/categorize', {pattern: pattern.value, category});
       reload();
-    });
+    };
+    const chips = el('div', {className: 'chips'}, ...QUICK.map(c => button(c, () => choose(c), 'chip')));
     return el('div', {className: 'review'},
       row(g.sample.slice(0, 40), `${eur2(g.total)} · ×${g.count}`),
       el('div', {className: 'muted', textContent: 'Entries containing:'}), pattern,
-      el('div', {className: 'muted', textContent: 'are:'}), cat.wrap, apply);
+      el('div', {className: 'muted', textContent: 'are (tap one, or type another):'}), chips,
+      cat.wrap, button('Apply typed category', () => choose(cat.input.value)));
   });
   return card(`To review (${unclear} entries)`,
     note('I could not classify these. Your answer becomes a rule applied to every matching entry, now and on future syncs.'),
-    ...items);
+    ...items, review.length > 8 ? note(`${review.length - 8} more after these.`) : null);
 }
 
 async function entriesCard(category, month, cats, reload) {
