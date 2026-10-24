@@ -76,3 +76,11 @@ class Database:
             " VALUES(:account_id,:symbol,:quantity,:value,:cost_basis)",
             holdings,
         )
+
+    def delete_provider(self, provider: str) -> int:
+        """Remove every account of a provider with its transactions and holdings."""
+        ids = [r[0] for r in self.conn.execute("SELECT id FROM accounts WHERE provider=?", (provider,))]
+        for table in ("holdings", "transactions"):
+            self.conn.executemany(f"DELETE FROM {table} WHERE account_id=?", [(i,) for i in ids])
+        self.conn.execute("DELETE FROM accounts WHERE provider=?", (provider,))
+        return len(ids)

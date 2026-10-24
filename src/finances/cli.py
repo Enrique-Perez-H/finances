@@ -17,6 +17,8 @@ def main(argv=None):
     sub.add_parser("sync", help="fetch data from the configured sources")
     s = sub.add_parser("serve", help="run the dashboard on localhost")
     s.add_argument("--port", type=int, default=8765)
+    forget = sub.add_parser("forget", help="delete all stored data of one provider (e.g. demo)")
+    forget.add_argument("provider")
     sec = sub.add_parser("secret", help="store a secret in the encrypted vault")
     sec.add_argument("key")
     args = p.parse_args(argv)
@@ -67,7 +69,11 @@ def _run(args):
     sources = ["demo"] if args.demo else secrets.get("sources", [])
     if args.demo:
         secrets = {**secrets, "sources": sources}
-    if args.cmd == "sync":
+    if args.cmd == "forget":
+        n = db.delete_provider(args.provider)
+        db.save()
+        print(f"Removed {n} account(s) of '{args.provider}'.")
+    elif args.cmd == "sync":
         print(json.dumps(_sync_interactive(db, secrets, sources, passphrase), indent=2))
     elif args.cmd == "serve":
         if not db.conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone() and sources:

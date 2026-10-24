@@ -70,7 +70,7 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                 return self._json(400, {"error": "bad request"})
             with sync_lock:
                 status = run_sync(
-                    db, secrets, secrets.get("sources", ["demo"]), inputs, lock=lock,
+                    db, secrets, secrets.get("sources", []), inputs, lock=lock,
                     persist_secrets=lambda s: config.save_secrets(db.passphrase, s))
             self._json(200, status)
 

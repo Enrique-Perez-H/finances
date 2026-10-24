@@ -51,6 +51,16 @@ class DbAndAnalysisTests(IsolatedHome):
         self.assertIn("tr_phone", status["trade_republic"]["error"])
         self.assertEqual(run_sync(db, {}, ["enable_banking"])["enable_banking"]["state"], "unavailable")
 
+    def test_delete_provider_removes_only_that_provider(self):
+        db = Database("pw")
+        run_sync(db, {}, ["demo"])
+        db.upsert_account(dict(id="x", provider="real", name="Real", kind="cash", currency="EUR",
+                               balance=5, updated_at="t"))
+        self.assertEqual(db.delete_provider("demo"), 3)
+        self.assertEqual([r["id"] for r in db.conn.execute("SELECT id FROM accounts")], ["x"])
+        for table in ("transactions", "holdings"):
+            self.assertEqual(db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
+
     def test_summary_shape(self):
         db = Database("pw")
         run_sync(db, {}, ["demo"])
