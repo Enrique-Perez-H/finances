@@ -19,6 +19,7 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8765)
     fd = sub.add_parser("find", help="search your entries by text (shown only in your terminal)")
     fd.add_argument("text")
+    sub.add_parser("categories", help="every category with how many entries and how much it holds")
     um = sub.add_parser("unmatched", help="most common entries that could not be categorised")
     um.add_argument("--top", type=int, default=30)
     sub.add_parser("fields", help="which fields the bank fills in (counts only, no values)")
@@ -101,6 +102,16 @@ def _run(args):
             print(f"Data: {r['provider']}: {r['n']} account(s), last update {r['last']}")
         return 0
 
+    if args.cmd == "categories":
+        from . import categorize
+        db = Database(passphrase)
+        stats = {r["category"]: (r["n"], r["spent"], r["received"]) for r in db.conn.execute(
+            "SELECT category, COUNT(*) n, SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END) spent,"
+            " SUM(CASE WHEN amount>0 THEN amount ELSE 0 END) received FROM transactions GROUP BY category")}
+        for name in categorize.all_categories(db) + [categorize.UNCATEGORIZED]:
+            n, spent, received = stats.get(name, (0, 0, 0))
+            print(f"{name:<24} {n:>5} entries  out {spent or 0:>10.2f}  in {received or 0:>10.2f}")
+        return 0
     if args.cmd in ("find", "unmatched"):
         from . import categorize
         db = Database(passphrase)

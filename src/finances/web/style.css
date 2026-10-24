@@ -45,3 +45,4 @@ label.muted{display:flex;align-items:center;gap:8px;margin:8px 0}
 .ranges{display:flex;gap:6px;margin:4px 0 8px}
 .ranges button{background:var(--bg);color:var(--muted);border:1px solid var(--muted);padding:5px 12px;font-size:.85rem}
 .ranges button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.warn{width:100%;color:var(--muted);font-size:.8rem}

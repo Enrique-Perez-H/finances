@@ -28,7 +28,7 @@ export async function render(root) {
     const rows = entry[1] ? d.rows.slice(-entry[1]) : d.rows;
     const kinds = ['cash', 'savings', 'investment'].filter(k => rows.some(r => r[k] !== null));
     const series = [...kinds.map(k => ({label: LABELS[k], values: rows.map(r => r[k])})),
-      {label: 'Total', values: rows.map(r => r.partial ? null : r.total)}];
+      {label: 'Total', values: rows.map(r => r.total)}];  // sum of the known parts
     const buttons = el('div', {className: 'ranges'}, ...RANGES.map(([name]) => {
       const b = el('button', {textContent: name === 'All' ? 'Since start' : name, className: name === range ? 'on' : ''});
       b.addEventListener('click', () => {
@@ -40,9 +40,11 @@ export async function render(root) {
     }));
     const points = Math.max(...series.map(s => s.values.filter(v => v !== null).length));
     chartCard.replaceChildren(el('h2', {textContent: 'Evolution'}), buttons,
-      points >= 2 ? lineChart(series, rows.map(r => r.month)) : null, legend(series),
+      points >= 2 ? lineChart(series, rows.map(r => r.month),
+        {notes: rows.map(r => r.partial ? 'Total leaves out accounts with no data for this month.' : '')}) : null,
+      legend(series),
       note(points >= 2
-        ? 'Tap or drag on the chart to read a month. The total line only covers months where every account is known. Investments start when you first synced.'
+        ? 'Tap or drag on the chart to read a month. The total is the sum of the lines that have data; early months leave out investments, which start when you first synced.'
         : `Not enough history for a line yet (${rows.length} month${rows.length === 1 ? '' : 's'} with data). Investments gain one point per sync day.`));
   };
   draw();
