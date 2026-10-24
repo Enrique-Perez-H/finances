@@ -14,3 +14,4 @@ button:disabled{opacity:.5}
 .bar{height:8px;border-radius:4px;background:var(--accent);margin-top:4px}
 svg{width:100%;height:auto}
 #status{min-height:1.2em;color:var(--muted);margin:0 0 8px}
+input{background:var(--card);color:var(--fg);border:1px solid var(--muted);border-radius:8px;padding:8px;width:7em;margin:0 6px}

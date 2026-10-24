@@ -7,8 +7,7 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
-os.environ["FINANCES_HOME"] = tempfile.mkdtemp()
-
+from isolated import IsolatedHome  # noqa: E402
 from finances import analysis, vault  # noqa: E402
 from finances.db import Database  # noqa: E402
 from finances.server import make_handler  # noqa: E402
@@ -30,7 +29,7 @@ class VaultTests(unittest.TestCase):
             vault.decrypt("pw", bytes(blob))
 
 
-class DbAndAnalysisTests(unittest.TestCase):
+class DbAndAnalysisTests(IsolatedHome):
     def test_persist_encrypted_and_reload(self):
         db = Database("pw")
         run_sync(db, {}, ["demo"])
@@ -48,7 +47,9 @@ class DbAndAnalysisTests(unittest.TestCase):
         n = db.conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
         status = run_sync(db, {}, ["demo", "trade_republic"])
         self.assertEqual(db.conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0], n)
-        self.assertEqual(status["trade_republic"]["state"], "unavailable")
+        self.assertEqual(status["trade_republic"]["state"], "error")  # no credentials configured
+        self.assertIn("tr_phone", status["trade_republic"]["error"])
+        self.assertEqual(run_sync(db, {}, ["enable_banking"])["enable_banking"]["state"], "unavailable")
 
     def test_summary_shape(self):
         db = Database("pw")
@@ -61,6 +62,8 @@ class DbAndAnalysisTests(unittest.TestCase):
 class ServerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._home = tempfile.mkdtemp()
+        os.environ["FINANCES_HOME"] = cls._home
         db = Database("pw")
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(db, {"sources": ["demo"]}))
         cls.port = cls.srv.server_address[1]

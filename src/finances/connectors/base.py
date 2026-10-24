@@ -8,12 +8,17 @@ from dataclasses import dataclass, field
 
 
 class NeedsInput(Exception):
-    """Raised when a sync needs the user (e.g. a 2FA code or bank re-consent)."""
+    """Raised when a sync needs the user (e.g. a 2FA code or bank re-consent).
 
-    def __init__(self, prompt: str, url: str | None = None):
+    The connector instance is kept alive by the sync layer, so the next
+    `fetch(user_input=...)` call can continue where this one stopped.
+    """
+
+    def __init__(self, prompt: str, url: str | None = None, field: str | None = None):
         super().__init__(prompt)
         self.prompt = prompt
         self.url = url
+        self.field = field  # e.g. "code" -> the UI shows a text box
 
 
 @dataclass
@@ -27,7 +32,9 @@ class Connector:
     name = "base"
 
     def __init__(self, secrets: dict):
+        # Mutable on purpose: connectors may store session tokens here. The sync
+        # layer persists the dict (encrypted) after each run.
         self.secrets = secrets
 
-    def fetch(self) -> Snapshot:
+    def fetch(self, user_input: str | None = None) -> Snapshot:
         raise NotImplementedError

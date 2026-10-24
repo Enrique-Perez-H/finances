@@ -9,7 +9,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis
+from . import analysis, config
 from .db import Database
 from .sync import run_sync
 
@@ -20,7 +20,8 @@ ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
 
 
 def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
-    lock = threading.Lock()
+    lock = threading.Lock()       # database reads/writes
+    sync_lock = threading.Lock()  # one sync at a time
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # keep paths/amounts out of logs
@@ -61,8 +62,16 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                 return self._json(403, {"error": "forbidden"})
             if self.path != "/api/sync":
                 return self._json(404, {"error": "not found"})
-            with lock:
-                status = run_sync(db, secrets, secrets.get("sources", ["demo"]))
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}") if length < 65536 else {}
+                inputs = {k: str(v) for k, v in (body.get("inputs") or {}).items()}
+            except (ValueError, AttributeError):
+                return self._json(400, {"error": "bad request"})
+            with sync_lock:
+                status = run_sync(
+                    db, secrets, secrets.get("sources", ["demo"]), inputs, lock=lock,
+                    persist_secrets=lambda s: config.save_secrets(db.passphrase, s))
             self._json(200, status)
 
     return Handler

@@ -47,17 +47,36 @@ async function load() {
   render(await r.json());
 }
 
-document.getElementById('sync').addEventListener('click', async ev => {
-  const btn = ev.currentTarget, status = document.getElementById('status');
-  btn.disabled = true; status.textContent = 'Syncing…';
+async function sync(inputs = {}) {
+  const btn = document.getElementById('sync'), status = document.getElementById('status');
+  btn.disabled = true;
+  status.replaceChildren('Syncing… if Trade Republic asks, confirm the login in its app.');
   try {
-    const r = await fetch('/api/sync', {method: 'POST', headers: {'X-Requested-With': 'finances'}});
+    const r = await fetch('/api/sync', {
+      method: 'POST',
+      headers: {'X-Requested-With': 'finances', 'Content-Type': 'application/json'},
+      body: JSON.stringify({inputs}),
+    });
     const s = await r.json();
-    status.textContent = Object.entries(s).map(([k, v]) =>
-      `${k}: ${v.state}${v.prompt ? ' – ' + v.prompt : ''}`).join(' | ');
+    const parts = [];
+    for (const [name, v] of Object.entries(s)) {
+      if (v.state === 'needs_input' && v.field) {
+        const input = el('input', {type: 'text', inputMode: 'numeric', autocomplete: 'one-time-code', placeholder: 'code'});
+        const go = el('button', {textContent: 'Send'});
+        go.addEventListener('click', () => sync({[name]: input.value.trim()}));
+        parts.push(el('div', {}, `${name}: ${v.prompt} `, input, go));
+      } else if (v.state === 'needs_input') {
+        parts.push(el('div', {textContent: `${name}: ${v.prompt}`}));
+      } else {
+        parts.push(el('div', {textContent: `${name}: ${v.state}${v.error ? ' – ' + v.error : ''}`}));
+      }
+    }
+    status.replaceChildren(...parts);
     await load();
   } catch (e) { status.textContent = 'Sync failed'; }
   btn.disabled = false;
-});
+}
+
+document.getElementById('sync').addEventListener('click', () => sync());
 
 load();

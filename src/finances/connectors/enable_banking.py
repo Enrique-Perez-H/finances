@@ -10,5 +10,5 @@ from .base import Connector, Snapshot
 class EnableBankingConnector(Connector):
     name = "enable_banking"
 
-    def fetch(self) -> Snapshot:
+    def fetch(self, user_input: str | None = None) -> Snapshot:
         raise NotImplementedError("Enable Banking connector not implemented yet")

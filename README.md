@@ -29,7 +29,8 @@ python -m unittest discover -s tests
 |---|---|
 | Encrypted vault, DB, analysis, dashboard, tests | done |
 | Demo connector | done |
-| Trade Republic connector (`pytr`) | TODO |
+| Trade Republic connector (`pytr`): cash and holdings, session kept encrypted | done, untested against a real account |
+| Trade Republic transaction history | TODO |
 | Santander / Revolut connector (Enable Banking) | TODO |
-| 2FA / consent prompts in the UI (`NeedsInput`) | TODO (backend hook exists) |
+| 2FA code prompt in the UI (`NeedsInput`) | done |
 | Categorisation rules, richer estimates | TODO |

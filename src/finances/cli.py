@@ -31,6 +31,19 @@ def main(argv=None):
         return 1
 
 
+def _sync_interactive(db, secrets, sources, passphrase):
+    """Run a sync, asking on the terminal whenever a connector needs a code."""
+    import getpass
+    save = lambda s: config.save_secrets(passphrase, s)  # noqa: E731
+    status = run_sync(db, secrets, sources, persist_secrets=save)
+    for name, st in list(status.items()):
+        while st["state"] == "needs_input" and st.get("field"):
+            code = getpass.getpass(f"{name}: {st['prompt']}: ")
+            st = run_sync(db, secrets, [name], {name: code}, persist_secrets=save)[name]
+            status[name] = st
+    return status
+
+
 def _run(args):
     passphrase = config.get_passphrase()
     secrets = config.load_secrets(passphrase)
@@ -38,10 +51,14 @@ def _run(args):
     if args.cmd == "secret":
         import getpass
         value = getpass.getpass(f"Value for {args.key} (hidden): ")
-        try:
-            secrets[args.key] = json.loads(value)  # allows lists, e.g. sources
-        except json.JSONDecodeError:
-            secrets[args.key] = value
+        # Only JSON lists/objects are parsed (e.g. sources); everything else stays a string,
+        # so a PIN like 1234 is not turned into a number.
+        if value.lstrip().startswith(("[", "{")):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                pass
+        secrets[args.key] = value
         config.save_secrets(passphrase, secrets)
         print("Saved.")
         return 0
@@ -51,10 +68,11 @@ def _run(args):
     if args.demo:
         secrets = {**secrets, "sources": sources}
     if args.cmd == "sync":
-        print(json.dumps(run_sync(db, secrets, sources), indent=2))
+        print(json.dumps(_sync_interactive(db, secrets, sources, passphrase), indent=2))
     elif args.cmd == "serve":
         if not db.conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone() and sources:
-            run_sync(db, secrets, sources)
+            run_sync(db, secrets, sources,
+                     persist_secrets=lambda s: config.save_secrets(passphrase, s))
         serve(db, secrets, args.port)
     return 0
 

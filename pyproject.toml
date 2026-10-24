@@ -5,6 +5,11 @@ description = "Private, read-only personal finance dashboard. All data stays on 
 requires-python = ">=3.11"
 dependencies = ["cryptography>=42"]
 
+[project.optional-dependencies]
+# Unofficial Trade Republic client, pinned to an exact version on purpose: it handles your PIN.
+trade-republic = ["pytr==0.4.10", "requests", "websockets>=14", "certifi", "coloredlogs",
+                  "packaging", "babel"]
+
 [project.scripts]
 finances = "finances.cli:main"
 

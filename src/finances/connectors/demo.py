@@ -16,7 +16,7 @@ _CATEGORIES = {
 class DemoConnector(Connector):
     name = "demo"
 
-    def fetch(self) -> Snapshot:
+    def fetch(self, user_input: str | None = None) -> Snapshot:
         rng = random.Random(42)
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         snap = Snapshot()
