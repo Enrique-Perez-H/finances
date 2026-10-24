@@ -15,10 +15,17 @@ INTERNAL = "Internal transfer"  # moves between your own accounts: not spending,
 INCOME_CATEGORIES = ["Salary", "Transfers received", "Interest & dividends", "Refunds",
                      "Other income"]
 EXPENSE_CATEGORIES = [
-    "Groceries", "Restaurants & bars", "Transport", "Fuel", "Housing", "Utilities", "Telecom",
-    "Subscriptions", "Health", "Shopping", "Entertainment", "Travel", "Education", "Insurance",
-    "Taxes", "Cash withdrawals", "Fees & interest", "Kids", "Donations", "Sports & leisure",
-    "Transfers sent", "Other"]
+    "Groceries", "Restaurants & bars", "Transport", "Housing", "Home & furniture",
+    "Utilities & telecom", "Subscriptions", "Health", "Shopping", "Leisure", "Travel",
+    "Education", "Insurance", "Taxes & fees", "Cash withdrawals", "Kids", "Donations", "Other"]
+
+# Names used by earlier versions -> current names. Seeded into the category_aliases table,
+# which also records merges you make, so old names never come back.
+LEGACY_ALIASES = {
+    "Fuel": "Transport", "Telecom": "Utilities & telecom", "Utilities": "Utilities & telecom",
+    "Entertainment": "Leisure", "Sports & leisure": "Leisure", "Transfers sent": "Other",
+    "Fees & interest": "Taxes & fees", "Taxes": "Taxes & fees",
+}
 
 # (pattern, category when money goes out, category when money comes in or None = Refunds)
 DEFAULT_RULES = [
@@ -37,14 +44,14 @@ DEFAULT_RULES = [
     ("uber", "Transport", None), ("cabify", "Transport", None), ("bolt", "Transport", None),
     ("taxi", "Transport", None), ("blablacar", "Transport", None), ("parking", "Transport", None),
     ("alsa", "Transport", None), ("tmb", "Transport", None),
-    ("repsol", "Fuel", None), ("cepsa", "Fuel", None), ("moeve", "Fuel", None), ("bp", "Fuel", None),
-    ("shell", "Fuel", None), ("galp", "Fuel", None), ("gasolinera", "Fuel", None),
-    ("iberdrola", "Utilities", None), ("endesa", "Utilities", None), ("naturgy", "Utilities", None),
-    ("holaluz", "Utilities", None), ("octopus", "Utilities", None), ("agua", "Utilities", None),
-    ("canal de isabel", "Utilities", None),
-    ("movistar", "Telecom", None), ("vodafone", "Telecom", None), ("orange", "Telecom", None),
-    ("masmovil", "Telecom", None), ("yoigo", "Telecom", None), ("digi", "Telecom", None),
-    ("pepephone", "Telecom", None), ("jazztel", "Telecom", None),
+    ("repsol", "Transport", None), ("cepsa", "Transport", None), ("moeve", "Transport", None), ("bp", "Transport", None),
+    ("shell", "Transport", None), ("galp", "Transport", None), ("gasolinera", "Transport", None),
+    ("iberdrola", "Utilities & telecom", None), ("endesa", "Utilities & telecom", None), ("naturgy", "Utilities & telecom", None),
+    ("holaluz", "Utilities & telecom", None), ("octopus", "Utilities & telecom", None), ("agua", "Utilities & telecom", None),
+    ("canal de isabel", "Utilities & telecom", None),
+    ("movistar", "Utilities & telecom", None), ("vodafone", "Utilities & telecom", None), ("orange", "Utilities & telecom", None),
+    ("masmovil", "Utilities & telecom", None), ("yoigo", "Utilities & telecom", None), ("digi", "Utilities & telecom", None),
+    ("pepephone", "Utilities & telecom", None), ("jazztel", "Utilities & telecom", None),
     ("netflix", "Subscriptions", None), ("spotify", "Subscriptions", None),
     ("hbo", "Subscriptions", None), ("disney", "Subscriptions", None),
     ("amazon prime", "Subscriptions", None), ("prime video", "Subscriptions", None),
@@ -56,12 +63,12 @@ DEFAULT_RULES = [
     ("dentista", "Health", None), ("sanitas", "Health", None), ("adeslas", "Health", None),
     ("optica", "Health", None),
     ("amazon", "Shopping", None), ("zara", "Shopping", None), ("decathlon", "Shopping", None),
-    ("ikea", "Shopping", None), ("el corte ingles", "Shopping", None), ("mediamarkt", "Shopping", None),
-    ("fnac", "Shopping", None), ("leroy merlin", "Shopping", None), ("aliexpress", "Shopping", None),
+    ("ikea", "Home & furniture", None), ("el corte ingles", "Shopping", None), ("mediamarkt", "Shopping", None),
+    ("fnac", "Shopping", None), ("leroy merlin", "Home & furniture", None), ("aliexpress", "Shopping", None),
     ("zalando", "Shopping", None), ("pccomponentes", "Shopping", None), ("primark", "Shopping", None),
-    ("cine", "Entertainment", None), ("cinesa", "Entertainment", None),
-    ("ticketmaster", "Entertainment", None), ("steam", "Entertainment", None),
-    ("playstation", "Entertainment", None), ("nintendo", "Entertainment", None),
+    ("cine", "Leisure", None), ("cinesa", "Leisure", None),
+    ("ticketmaster", "Leisure", None), ("steam", "Leisure", None),
+    ("playstation", "Leisure", None), ("nintendo", "Leisure", None),
     ("booking", "Travel", None), ("airbnb", "Travel", None), ("ryanair", "Travel", None),
     ("vueling", "Travel", None), ("iberia", "Travel", None), ("easyjet", "Travel", None),
     ("hotel", "Travel", None),
@@ -69,15 +76,15 @@ DEFAULT_RULES = [
     ("coursera", "Education", None),
     ("seguro", "Insurance", None), ("mapfre", "Insurance", None), ("mutua", "Insurance", None),
     ("axa", "Insurance", None), ("allianz", "Insurance", None), ("linea directa", "Insurance", None),
-    ("hacienda", "Taxes", None), ("agencia tributaria", "Taxes", None), ("aeat", "Taxes", None),
-    ("ayuntamiento", "Taxes", None), ("dgt", "Taxes", None), ("impuesto", "Taxes", None),
+    ("hacienda", "Taxes & fees", None), ("agencia tributaria", "Taxes & fees", None), ("aeat", "Taxes & fees", None),
+    ("ayuntamiento", "Taxes & fees", None), ("dgt", "Taxes & fees", None), ("impuesto", "Taxes & fees", None),
     ("alquiler", "Housing", None), ("hipoteca", "Housing", None), ("comunidad", "Housing", None),
     ("rent", "Housing", None),
     ("cajero", "Cash withdrawals", None), ("reintegro", "Cash withdrawals", None),
     ("atm", "Cash withdrawals", None),
-    ("comision", "Fees & interest", "Refunds"), ("mantenimiento", "Fees & interest", "Refunds"),
-    ("interes", "Fees & interest", "Interest & dividends"),
-    ("intereses", "Fees & interest", "Interest & dividends"),
+    ("comision", "Taxes & fees", "Refunds"), ("mantenimiento", "Taxes & fees", "Refunds"),
+    ("interes", "Taxes & fees", "Interest & dividends"),
+    ("intereses", "Taxes & fees", "Interest & dividends"),
     ("guarderia", "Kids", None), ("kiabi", "Kids", None), ("toysrus", "Kids", None),
     # local shops and common Spanish business words
     ("guissona", "Groceries", None), ("bonarea", "Groceries", None), ("panaderia", "Groceries", None),
@@ -92,22 +99,26 @@ DEFAULT_RULES = [
     ("restaurant", "Restaurants & bars", None), ("tapas", "Restaurants & bars", None),
     ("bodega", "Restaurants & bars", None), ("heladeria", "Restaurants & bars", None),
     ("pub", "Restaurants & bars", None), ("carnivore", "Restaurants & bars", None),
-    ("calzados", "Shopping", None), ("zapateria", "Shopping", None), ("colchones", "Shopping", None),
+    ("calzados", "Shopping", None), ("zapateria", "Shopping", None), ("colchones", "Home & furniture", None),
     ("joyeria", "Shopping", None), ("boutique", "Shopping", None), ("women secret", "Shopping", None),
-    ("women secrets", "Shopping", None), ("ferreteria", "Shopping", None), ("papeleria", "Shopping", None),
-    ("libreria", "Shopping", None), ("muebles", "Shopping", None), ("cc", "Shopping", None),
+    ("women secrets", "Shopping", None), ("ferreteria", "Home & furniture", None), ("papeleria", "Shopping", None),
+    ("libreria", "Shopping", None), ("muebles", "Home & furniture", None), ("cc", "Shopping", None),
     ("centro comercial", "Shopping", None), ("estanco", "Other", None),
     ("salud", "Health", None), ("fisioterapia", "Health", None), ("podologo", "Health", None),
     ("veterinario", "Health", None), ("dental", "Health", None), ("parafarmacia", "Health", None),
-    ("piscina", "Sports & leisure", None), ("polideportivo", "Sports & leisure", None),
-    ("padel", "Sports & leisure", None), ("gimnasio", "Sports & leisure", None),
-    ("basic fit", "Sports & leisure", None), ("vivagym", "Sports & leisure", None),
+    ("piscina", "Leisure", None), ("polideportivo", "Leisure", None),
+    ("padel", "Leisure", None), ("gimnasio", "Leisure", None),
+    ("basic fit", "Leisure", None), ("vivagym", "Leisure", None),
     ("intermon", "Donations", None), ("oxfam", "Donations", None), ("unicef", "Donations", None),
     ("cruz roja", "Donations", None), ("greenpeace", "Donations", None), ("acnur", "Donations", None),
     ("medicos sin fronteras", "Donations", None), ("save the children", "Donations", None),
     ("fundacion", "Donations", None),
-    ("bizum", "Transfers sent", "Transfers received"),
-    ("transferencia", "Transfers sent", "Transfers received"),
+    ("conforama", "Home & furniture", None), ("bricolaje", "Home & furniture", None),
+    ("bauhaus", "Home & furniture", None), ("maisons du monde", "Home & furniture", None),
+    ("electrodomesticos", "Home & furniture", None), ("bricomart", "Home & furniture", None),
+    ("brico depot", "Home & furniture", None), ("cocinas", "Home & furniture", None),
+    ("bizum", "Other", "Transfers received"),
+    ("transferencia", "Other", "Transfers received"),
     ("trade republic", INTERNAL, INTERNAL), ("traderepublic", INTERNAL, INTERNAL),
     ("trbkdebb", INTERNAL, INTERNAL), ("traspaso", INTERNAL, INTERNAL),
     ("entre cuentas", INTERNAL, INTERNAL),
@@ -128,24 +139,24 @@ def _mcc_ranges():
                 table[str(code)] = category
     add("Groceries", 5411, 5422, 5441, 5451, 5462, 5499, 5300)
     add("Restaurants & bars", 5811, 5812, 5813, 5814)
-    add("Fuel", 5541, 5542, 5983)
+    add("Transport", 5541, 5542, 5983)
     add("Transport", 4111, 4112, 4121, 4131, 4784, 7523, 7512, 4789)
     add("Health", 5122, 5912, 5975, 5976, 7298, 7997, (8011, 8099))
     add("Shopping", 5200, 5251, 5311, 5331, 5399, 5611, 5621, 5631, 5641, 5651, 5661, 5691, 5699,
         5712, 5732, 5734, 5735, 5921, 5931, 5941, 5942, 5945, 5947, 5948, 5970, 5977, 5992, 5993,
         5994, 5995, 5999, 5310, 5719, 5722, 5733)
-    add("Entertainment", 7829, 7832, 7841, 7911, 7922, 7929, 7932, 7933, 7941, 7991, 7992, 7993,
+    add("Leisure", 7829, 7832, 7841, 7911, 7922, 7929, 7932, 7933, 7941, 7991, 7992, 7993,
         7994, 7996, 7998, 7999, 5816)
     add("Travel", 4411, 4511, 4722, 7011, 3000, (3000, 3299), (3500, 3999), 4723, 7032, 7033)
-    add("Telecom", 4812, 4814, 4816, 4899)
-    add("Utilities", 4900, 4821)
+    add("Utilities & telecom", 4812, 4814, 4816, 4899)
+    add("Utilities & telecom", 4900, 4821)
     add("Insurance", 6300, 6381, 6399)
-    add("Taxes", 9311, 9399, 9222, 9211)
+    add("Taxes & fees", 9311, 9399, 9222, 9211)
     add("Cash withdrawals", 6010, 6011)
     add("Education", 8211, 8220, 8241, 8244, 8249, 8299, 8351)
     add("Subscriptions", 5815, 5817, 5818, 5968, 5192)
     add("Housing", 6513, 1520, 1711, 1731, 1740, 1750, 1761, 1771, 7349)
-    add("Fees & interest", 6012, 6051, 6540)
+    add("Taxes & fees", 6012, 6051, 6540)
     return table
 
 
@@ -196,8 +207,23 @@ def _matcher(pattern: str):
     return re.compile(r"(?<![a-z0-9])" + re.escape(pattern) + tail)
 
 
-def classify(text: str, amount: float, user_rules: list[tuple[str, str]], mcc: str = "") -> tuple[str, str]:
+def classify(text: str, amount: float, user_rules: list[tuple[str, str]], mcc: str = "",
+             aliases: dict | None = None) -> tuple[str, str]:
     """Returns (category, source). Order: your rules, built-in keywords, merchant category code."""
+    category, source = _classify(text, amount, user_rules, mcc)
+    return _canon(category, aliases), source
+
+
+def _canon(category: str, aliases: dict | None = None) -> str:
+    merged = {**LEGACY_ALIASES, **(aliases or {})}
+    for _ in range(5):  # a merge may chain (A into B, later B into C)
+        if category not in merged:
+            break
+        category = merged[category]
+    return category
+
+
+def _classify(text, amount, user_rules, mcc):
     norm = normalize(text)
     for pattern, category in sorted(user_rules, key=lambda r: -len(r[0])):
         if _matcher(pattern).search(norm):
@@ -213,15 +239,47 @@ def classify(text: str, amount: float, user_rules: list[tuple[str, str]], mcc: s
     return UNCATEGORIZED, ""
 
 
+def aliases(db: Database) -> dict:
+    return {r["src"]: r["dst"] for r in db.conn.execute("SELECT src, dst FROM category_aliases")}
+
+
+def apply_aliases(db: Database) -> int:
+    """Rename old category names everywhere, including entries and rules you set yourself."""
+    n = 0
+    for src, dst in {**LEGACY_ALIASES, **aliases(db)}.items():
+        dst = _canon(dst, aliases(db))
+        n += db.conn.execute("UPDATE transactions SET category=? WHERE category=?", (dst, src)).rowcount
+        db.conn.execute("UPDATE rules SET category=? WHERE category=?", (dst, src))
+    return n
+
+
+def merge_category(db: Database, src: str, dst: str) -> int:
+    """Move everything in `src` to `dst` and keep it that way (also renames)."""
+    src, dst = src.strip(), dst.strip()
+    if not src or not dst or len(dst) > 40:
+        raise ValueError("both names are required (new name up to 40 characters)")
+    if UNCATEGORIZED in (src, dst) or src == dst:
+        raise ValueError("choose two different categories; 'uncategorized' cannot be merged")
+    db.conn.execute("UPDATE category_aliases SET dst=? WHERE dst=?", (dst, src))  # flatten chains
+    db.conn.execute("INSERT INTO category_aliases(src, dst) VALUES(?,?)"
+                    " ON CONFLICT(src) DO UPDATE SET dst=excluded.dst", (src, dst))
+    db.conn.execute("DELETE FROM category_aliases WHERE src=dst")
+    moved = apply_aliases(db)
+    categorize_all(db)
+    return moved
+
+
 def categorize_all(db: Database) -> int:
     """(Re)classify every entry not set by hand or by its connector. Returns how many changed."""
+    apply_aliases(db)
     user_rules = [(r["pattern"], r["category"]) for r in db.conn.execute("SELECT * FROM rules")]
+    alias_map = aliases(db)
     changed = 0
     rows = db.conn.execute(
         "SELECT id, description, amount, category, cat_source, mcc FROM transactions"
         " WHERE cat_source NOT IN ('manual', 'connector')").fetchall()
     for r in rows:
-        category, source = classify(r["description"], r["amount"], user_rules, r["mcc"])
+        category, source = classify(r["description"], r["amount"], user_rules, r["mcc"], alias_map)
         if (category, source) != (r["category"], r["cat_source"]):
             db.conn.execute("UPDATE transactions SET category=?, cat_source=? WHERE id=?",
                             (category, source, r["id"]))
@@ -282,4 +340,6 @@ def all_categories(db: Database) -> list[str]:
     used = {r[0] for r in db.conn.execute("SELECT DISTINCT category FROM transactions")}
     used |= {r[0] for r in db.conn.execute("SELECT DISTINCT category FROM rules")}
     base = EXPENSE_CATEGORIES + INCOME_CATEGORIES + [INTERNAL]
-    return base + sorted(c for c in used if c not in base and c != UNCATEGORIZED)
+    merged_away = set(LEGACY_ALIASES) | set(aliases(db))
+    return base + sorted(c for c in used if c not in base and c != UNCATEGORIZED
+                         and c not in merged_away)

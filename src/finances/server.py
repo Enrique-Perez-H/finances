@@ -83,6 +83,12 @@ def _post_categorize(db, body):
     return {"changed": changed}
 
 
+def _post_merge_category(db, body):
+    moved = categorize.merge_category(db, str(body.get("src", "")), str(body.get("dst", "")))
+    db.save()
+    return {"moved": moved}
+
+
 def _post_delete_rule(db, body):
     changed = categorize.delete_rule(db, str(body.get("pattern", "")))
     db.save()
@@ -115,6 +121,7 @@ POST_ROUTES = {
     "/api/funds/preview": lambda db, body: fund.preview(db, body),
     "/api/categorize": _post_categorize,
     "/api/rules/delete": _post_delete_rule,
+    "/api/categories/merge": _post_merge_category,
 }
 
 

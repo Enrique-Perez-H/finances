@@ -88,7 +88,7 @@ def map_timeline_item(item: dict) -> dict | None:
     elif etype in _MOVES:
         hint = INTERNAL
     elif etype in _TAX:
-        hint = "Refunds" if amount > 0 else "Taxes"
+        hint = "Refunds" if amount > 0 else "Taxes & fees"
     elif etype in _ATM:
         hint = "Cash withdrawals"
     text = " ".join(p for p in (item.get("title"), item.get("subtitle")) if p) or etype

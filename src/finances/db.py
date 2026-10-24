@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS account_settings (
     id TEXT PRIMARY KEY,           -- account id
     kind TEXT NOT NULL             -- your choice of type; survives later syncs
 );
+CREATE TABLE IF NOT EXISTS category_aliases (
+    src TEXT PRIMARY KEY,          -- a category name that was merged or renamed
+    dst TEXT NOT NULL              -- where its entries live now
+);
 CREATE TABLE IF NOT EXISTS rules (
     pattern TEXT PRIMARY KEY,      -- normalized words, matched against transaction text
     category TEXT NOT NULL

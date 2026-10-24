@@ -1,7 +1,7 @@
 import {card, row, el, eur, eur2, pct, get, post, note, button, barRow, categoryInput} from '../ui.js';
 
 const QUICK = ['Internal transfer', 'Groceries', 'Restaurants & bars', 'Transport', 'Shopping',
-  'Subscriptions', 'Utilities', 'Health', 'Transfers sent', 'Other'];
+  'Subscriptions', 'Utilities & telecom', 'Health', 'Home & furniture', 'Leisure', 'Other'];
 let month = null;
 let openCategory = null;
 
@@ -33,6 +33,7 @@ export async function render(root) {
 
   if (openCategory) parts.push(await entriesCard(openCategory, month, cats, reload));
   parts.push(rulesCard(rules, reload));
+  parts.push(categoriesCard(cats, reload));
   root.replaceChildren(...parts);
 }
 
@@ -89,4 +90,20 @@ function genericCard(generic, reload) {
   return card(`No shop name (${generic.total} entries)`,
     note('The bank gives no merchant for these (e.g. contactless), so a rule would label them all the same. They are asked one by one, biggest first.'),
     ...items, generic.total > items.length ? note(`${generic.total - items.length} more after these.`) : null);
+}
+
+function categoriesCard(cats, reload) {
+  const from = el('select', {}, ...cats.map(c => el('option', {value: c, textContent: c})));
+  const to = categoryInput(cats);
+  const go = button('Merge / rename', async () => {
+    const dst = to.input.value.trim();
+    if (!dst || dst === from.value) return;
+    if (!confirm(`Move everything in "${from.value}" to "${dst}", now and in future syncs?`)) return;
+    await post('/api/categories/merge', {src: from.value, dst});
+    reload();
+  });
+  return card('Categories',
+    note('Merge a category into another, or rename it by typing a new name. It applies to all entries and to future syncs.'),
+    el('div', {className: 'muted', textContent: 'Move everything in:'}), from,
+    el('div', {className: 'muted', textContent: 'into (existing or new name):'}), to.wrap, go);
 }

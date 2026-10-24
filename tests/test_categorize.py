@@ -21,7 +21,7 @@ class ClassifyTests(IsolatedHome):
         self.assertEqual(classify("MERCADONA", -20, [])[0], "Groceries")
         self.assertEqual(classify("AMAZON EU", 12, [])[0], "Refunds")
         self.assertEqual(classify("Bizum de Ana", 15, [])[0], "Transfers received")
-        self.assertEqual(classify("Bizum a Luis", -15, [])[0], "Transfers sent")
+        self.assertEqual(classify("Bizum a Luis", -15, [])[0], "Other")
         self.assertEqual(classify("TRANSFERENCIA A TRADE REPUBLIC", -500, [])[0], INTERNAL)
         self.assertEqual(classify("Nómina ACME", 2000, [])[0], "Salary")
 
@@ -58,7 +58,7 @@ class MccAndTransferTests(IsolatedHome):
         db.upsert_transaction(dict(id="1", account_id="a", date="2026-01-01", amount=-9,
                                    description="Transaction", category="uncategorized", mcc="5541"))
         categorize.categorize_all(db)
-        self.assertEqual(db.conn.execute("SELECT category FROM transactions").fetchone()[0], "Fuel")
+        self.assertEqual(db.conn.execute("SELECT category FROM transactions").fetchone()[0], "Transport")
 
     def test_old_database_gets_mcc_column(self):
         db = Database("pw")
@@ -74,8 +74,8 @@ class RealWorldTests(IsolatedHome):
 
     def test_local_shops(self):
         for text, cat in (("GUISSONA LES", "Groceries"), ("TASCA MOLINESA", "Restaurants & bars"),
-                          ("COLCHONES AZNAR", "Shopping"), ("JACA SALUD", "Health"),
-                          ("COMPLEJ PISCINA", "Sports & leisure"), ("CC ARAGONIA", "Shopping")):
+                          ("COLCHONES AZNAR", "Home & furniture"), ("JACA SALUD", "Health"),
+                          ("COMPLEJ PISCINA", "Leisure"), ("CC ARAGONIA", "Shopping")):
             self.assertEqual(classify(text, -10, [])[0], cat, text)
 
     def test_contactless_is_generic_and_asked_one_by_one(self):
@@ -95,6 +95,65 @@ class RealWorldTests(IsolatedHome):
         self.assertEqual(categorize.generic_entries(db)["total"], 2)
         # a manual choice for one does not touch the others
         self.assertEqual(db.conn.execute("SELECT COUNT(*) FROM transactions WHERE category='Groceries'").fetchone()[0], 1)
+
+
+class CategoryNamesTests(IsolatedHome):
+    def setUp(self):
+        super().setUp()
+        self.db = Database("pw")
+        self.db.upsert_account(dict(id="a", provider="t", name="A", kind="cash", currency="EUR",
+                                    balance=0, updated_at="t"))
+
+    def add(self, id, desc, amount=-10, category="uncategorized", source=""):
+        self.db.upsert_transaction(dict(id=id, account_id="a", date="2026-01-01", amount=amount,
+                                        description=desc, category=category, cat_source=source))
+
+    def cat(self, id):
+        return self.db.conn.execute("SELECT category FROM transactions WHERE id=?", (id,)).fetchone()[0]
+
+    def test_proposed_merges_and_new_category_in_the_list(self):
+        names = categorize.all_categories(self.db)
+        for new in ("Home & furniture", "Utilities & telecom", "Leisure", "Taxes & fees", "Transport"):
+            self.assertIn(new, names)
+        for old in ("Fuel", "Telecom", "Utilities", "Entertainment", "Sports & leisure",
+                    "Transfers sent", "Fees & interest", "Taxes"):
+            self.assertNotIn(old, names)
+
+    def test_old_names_are_moved_everywhere_including_your_own_choices(self):
+        self.add("1", "REPSOL", category="Fuel", source="default")
+        self.add("2", "WHATEVER", category="Telecom", source="manual")
+        self.add("3", "SOMETHING", category="Sports & leisure", source="connector")
+        self.db.conn.execute("INSERT INTO rules VALUES('xyz', 'Entertainment')")
+        categorize.categorize_all(self.db)
+        self.assertEqual((self.cat("1"), self.cat("2"), self.cat("3")),
+                         ("Transport", "Utilities & telecom", "Leisure"))
+        self.assertEqual(self.db.conn.execute("SELECT category FROM rules").fetchone()[0], "Leisure")
+        self.assertEqual(categorize.categorize_all(self.db), 0)  # stable, nothing flickers
+
+    def test_user_rule_with_an_old_name_lands_in_the_new_one(self):
+        self.add("1", "PAGO XYZ SL")
+        self.db.conn.execute("INSERT INTO rules VALUES('xyz', 'Fuel')")
+        categorize.categorize_all(self.db)
+        self.assertEqual(self.cat("1"), "Transport")
+
+    def test_merge_and_rename_stick_for_future_entries(self):
+        self.add("1", "MERCADONA")
+        categorize.categorize_all(self.db)
+        self.assertEqual(self.cat("1"), "Groceries")
+        categorize.merge_category(self.db, "Groceries", "Food")  # rename
+        self.assertEqual(self.cat("1"), "Food")
+        self.add("2", "MERCADONA CENTRO")  # arrives in a later sync
+        categorize.categorize_all(self.db)
+        self.assertEqual(self.cat("2"), "Food")
+        categorize.merge_category(self.db, "Food", "Shopping")  # chains are flattened
+        categorize.add_rule(self.db, "mercadona", "Groceries")
+        self.assertEqual((self.cat("1"), self.cat("2")), ("Shopping", "Shopping"))
+        self.assertNotIn("Food", categorize.all_categories(self.db))
+
+    def test_merge_validation(self):
+        for src, dst in (("", "A"), ("A", ""), ("A", "A"), ("uncategorized", "A"), ("A", "uncategorized")):
+            with self.assertRaises(ValueError):
+                categorize.merge_category(self.db, src, dst)
 
 
 class DbFlowTests(IsolatedHome):
@@ -187,6 +246,13 @@ class ApiTests(IsolatedHome):
         self.assertGreater(res["changed"], 0)
         self.assertNotIn(first["key"], {g["key"] for g in self.call("/api/review")[1]})
         self.assertIn(["Other"], [[r["category"]] for r in self.call("/api/rules")[1]])
+
+    def test_merge_endpoint(self):
+        code, res = self.call("/api/categories/merge", {"src": "Groceries", "dst": "Food"})
+        self.assertEqual(code, 200)
+        self.assertGreater(res["moved"], 0)
+        self.assertIn("Food", {c["category"] for c in self.call("/api/spending")[1]["categories"]})
+        self.assertEqual(self.call("/api/categories/merge", {"src": "x", "dst": "x"})[0], 400)
 
     def test_validation_and_csrf(self):
         self.assertEqual(self.call("/api/categorize", {"pattern": "x", "category": ""})[0], 400)

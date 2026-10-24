@@ -19,6 +19,7 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8765)
     fd = sub.add_parser("find", help="search your entries by text (shown only in your terminal)")
     fd.add_argument("text")
+    sub.add_parser("recategorize", help="apply the current rules and category names to every entry")
     sub.add_parser("categories", help="every category with how many entries and how much it holds")
     um = sub.add_parser("unmatched", help="most common entries that could not be categorised")
     um.add_argument("--top", type=int, default=30)
@@ -102,6 +103,12 @@ def _run(args):
             print(f"Data: {r['provider']}: {r['n']} account(s), last update {r['last']}")
         return 0
 
+    if args.cmd == "recategorize":
+        from . import categorize
+        db = Database(passphrase)
+        print(f"{categorize.categorize_all(db)} entries changed.")
+        db.save()
+        return 0
     if args.cmd == "categories":
         from . import categorize
         db = Database(passphrase)
@@ -150,6 +157,9 @@ def _run(args):
     elif args.cmd == "sync":
         print(json.dumps(_sync_interactive(db, secrets, sources, passphrase), indent=2))
     elif args.cmd == "serve":
+        from . import categorize
+        categorize.categorize_all(db)  # picks up renamed categories and new rules right away
+        db.save()
         if not db.conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone() and sources:
             run_sync(db, secrets, sources,
                      persist_secrets=lambda s: config.save_secrets(passphrase, s))
