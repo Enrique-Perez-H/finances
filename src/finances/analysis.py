@@ -1,6 +1,7 @@
 """All computations run locally against the in-memory database."""
 from datetime import date
 
+from .categorize import INTERNAL, UNCATEGORIZED
 from .db import Database
 
 
@@ -16,7 +17,8 @@ def monthly_cashflow(db: Database, months: int = 6) -> list[dict]:
         "SELECT substr(date,1,7) AS month,"
         " SUM(CASE WHEN amount>0 THEN amount ELSE 0 END) AS income,"
         " SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END) AS spending"
-        " FROM transactions GROUP BY month ORDER BY month DESC LIMIT ?", (months,)).fetchall()
+        " FROM transactions WHERE category != ? GROUP BY month ORDER BY month DESC LIMIT ?",
+        (INTERNAL, months)).fetchall()
     return [dict(month=r["month"], income=round(r["income"], 2),
                  spending=round(r["spending"], 2),
                  saved=round(r["income"] - r["spending"], 2)) for r in reversed(rows)]
@@ -26,8 +28,8 @@ def spending_by_category(db: Database, month: str | None = None) -> list[dict]:
     month = month or date.today().isoformat()[:7]
     rows = db.conn.execute(
         "SELECT category, SUM(-amount) AS total FROM transactions"
-        " WHERE amount<0 AND substr(date,1,7)=? GROUP BY category ORDER BY total DESC",
-        (month,)).fetchall()
+        " WHERE amount<0 AND category != ? AND substr(date,1,7)=?"
+        " GROUP BY category ORDER BY total DESC", (INTERNAL, month)).fetchall()
     return [dict(category=r["category"], total=round(r["total"], 2)) for r in rows]
 
 
@@ -60,3 +62,34 @@ def summary(db: Database) -> dict:
         "holdings": [dict(h) for h in holdings],
         "projection": projection(db),
     }
+
+
+def spending(db: Database, month: str | None = None) -> dict:
+    """One month by category, with the previous month for comparison."""
+    months = [r[0] for r in db.conn.execute(
+        "SELECT DISTINCT substr(date,1,7) m FROM transactions ORDER BY m DESC")]
+    month = month if month in months else (months[0] if months else date.today().isoformat()[:7])
+    idx = months.index(month) if month in months else -1
+    prev_month = months[idx + 1] if 0 <= idx + 1 < len(months) else None
+    cur = {c["category"]: c["total"] for c in spending_by_category(db, month)}
+    prev = {c["category"]: c["total"] for c in spending_by_category(db, prev_month)} if prev_month else {}
+    total = sum(cur.values())
+    cats = [dict(category=c, total=t, share=round(t / total, 4) if total else 0,
+                 previous=prev.get(c, 0)) for c, t in cur.items()]
+    unclear = db.conn.execute(
+        "SELECT COUNT(*) FROM transactions WHERE category=?", (UNCATEGORIZED,)).fetchone()[0]
+    return dict(month=month, months=months, previous_month=prev_month, total=round(total, 2),
+                previous_total=round(sum(prev.values()), 2), categories=cats, unclear=unclear)
+
+
+def transactions(db: Database, category: str | None, month: str | None, limit: int = 200) -> list[dict]:
+    sql, args = "SELECT id, date, amount, description, category, cat_source FROM transactions WHERE 1=1", []
+    if category:
+        sql += " AND category=?"
+        args.append(category)
+    if month:
+        sql += " AND substr(date,1,7)=?"
+        args.append(month)
+    sql += " ORDER BY date DESC, id LIMIT ?"
+    args.append(limit)
+    return [dict(r) for r in db.conn.execute(sql, args)]

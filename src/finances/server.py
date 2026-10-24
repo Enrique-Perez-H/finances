@@ -6,10 +6,11 @@ header and the Host header is checked, to block cross-site and DNS-rebinding abu
 """
 import json
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis, config
+from . import analysis, categorize, config
 from .db import Database
 from .sync import run_sync
 
@@ -17,6 +18,58 @@ WEB = Path(__file__).parent / "web"
 TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
          ".json": "application/json", ".svg": "image/svg+xml"}
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
+
+
+class BadRequest(Exception):
+    pass
+
+
+def _q(query: dict, key: str, default=None):
+    return query.get(key, [default])[0]
+
+
+def _num(query: dict, key: str, default: float) -> float:
+    try:
+        return float(_q(query, key, default))
+    except (TypeError, ValueError):
+        raise BadRequest(f"{key} must be a number") from None
+
+
+# GET routes: (db, query) -> JSON-able. Read-only.
+GET_ROUTES = {
+    "/api/summary": lambda db, q: analysis.summary(db),
+    "/api/spending": lambda db, q: analysis.spending(db, _q(q, "month")),
+    "/api/transactions": lambda db, q: analysis.transactions(
+        db, _q(q, "category"), _q(q, "month"), int(_num(q, "limit", 200))),
+    "/api/review": lambda db, q: categorize.review_queue(db),
+    "/api/categories": lambda db, q: categorize.all_categories(db),
+    "/api/rules": lambda db, q: [dict(r) for r in db.conn.execute(
+        "SELECT pattern, category FROM rules ORDER BY pattern")],
+}
+
+
+def _post_categorize(db, body):
+    category = str(body.get("category", "")).strip()
+    if "tx_id" in body:  # one entry only; never overwritten by rules afterwards
+        categorize.set_manual(db, str(body["tx_id"]), category)
+        changed = 1
+    else:
+        changed = categorize.add_rule(db, str(body.get("pattern", "")), category)
+    db.save()
+    return {"changed": changed}
+
+
+def _post_delete_rule(db, body):
+    changed = categorize.delete_rule(db, str(body.get("pattern", "")))
+    db.save()
+    return {"changed": changed}
+
+
+# POST routes: (db, body) -> JSON-able. These change local data only.
+POST_ROUTES = {
+    "/api/categorize": _post_categorize,
+    "/api/rules/delete": _post_delete_rule,
+}
 
 
 def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
@@ -44,15 +97,31 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
         def _json(self, code, obj):
             self._send(code, json.dumps(obj).encode())
 
+        def _body(self) -> dict:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > 65536:
+                raise BadRequest("body too large")
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except ValueError:
+                raise BadRequest("invalid JSON") from None
+            if not isinstance(body, dict):
+                raise BadRequest("JSON object expected")
+            return body
+
         def do_GET(self):
             if not self._host_ok():
                 return self._json(403, {"error": "forbidden host"})
-            path = self.path.split("?")[0]
-            if path == "/api/summary":
-                with lock:
-                    return self._json(200, analysis.summary(db))
+            url = urllib.parse.urlparse(self.path)
+            route = GET_ROUTES.get(url.path)
+            if route:
+                try:
+                    with lock:
+                        return self._json(200, route(db, urllib.parse.parse_qs(url.query)))
+                except BadRequest as e:
+                    return self._json(400, {"error": str(e)})
             # /callback is where the bank sends you back; the page reads the code from the address
-            name = "index.html" if path in ("/", "/callback") else path.lstrip("/")
+            name = "index.html" if url.path in ("/", "/callback") else url.path.lstrip("/")
             file = (WEB / name).resolve()
             if WEB.resolve() not in file.parents or not file.is_file():
                 return self._json(404, {"error": "not found"})
@@ -61,19 +130,23 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
         def do_POST(self):
             if not self._host_ok() or self.headers.get("X-Requested-With") != "finances":
                 return self._json(403, {"error": "forbidden"})
-            if self.path != "/api/sync":
-                return self._json(404, {"error": "not found"})
+            path = self.path.split("?")[0]
             try:
-                length = int(self.headers.get("Content-Length") or 0)
-                body = json.loads(self.rfile.read(length) or b"{}") if length < 65536 else {}
-                inputs = {k: str(v) for k, v in (body.get("inputs") or {}).items()}
-            except (ValueError, AttributeError):
-                return self._json(400, {"error": "bad request"})
-            with sync_lock:
-                status = run_sync(
-                    db, secrets, secrets.get("sources", []), inputs, lock=lock,
-                    persist_secrets=lambda s: config.save_secrets(db.passphrase, s))
-            self._json(200, status)
+                body = self._body()
+                if path == "/api/sync":
+                    inputs = {k: str(v) for k, v in (body.get("inputs") or {}).items()}
+                    with sync_lock:
+                        status = run_sync(
+                            db, secrets, secrets.get("sources", []), inputs, lock=lock,
+                            persist_secrets=lambda s: config.save_secrets(db.passphrase, s))
+                    return self._json(200, status)
+                route = POST_ROUTES.get(path)
+                if not route:
+                    return self._json(404, {"error": "not found"})
+                with lock:
+                    return self._json(200, route(db, body))
+            except (BadRequest, ValueError) as e:
+                return self._json(400, {"error": str(e)})
 
     return Handler
 

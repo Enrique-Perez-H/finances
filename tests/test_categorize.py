@@ -1,0 +1,149 @@
+import json
+import threading
+import unittest
+import urllib.request
+from http.server import ThreadingHTTPServer
+
+from isolated import IsolatedHome
+from finances import analysis, categorize
+from finances.categorize import INTERNAL, UNCATEGORIZED, classify, merchant_key, normalize
+from finances.db import Database
+from finances.server import make_handler
+from finances.sync import run_sync
+
+
+class ClassifyTests(IsolatedHome):
+    def test_normalize_and_key(self):
+        self.assertEqual(normalize("Nómina  Octubre!"), "nomina octubre")
+        self.assertEqual(merchant_key("COMPRA TARJ. 5540XXXX MERCADONA MADRID"), "mercadona madrid")
+
+    def test_defaults_and_sign(self):
+        self.assertEqual(classify("MERCADONA", -20, [])[0], "Groceries")
+        self.assertEqual(classify("AMAZON EU", 12, [])[0], "Refunds")
+        self.assertEqual(classify("Bizum de Ana", 15, [])[0], "Transfers received")
+        self.assertEqual(classify("Bizum a Luis", -15, [])[0], "Transfers sent")
+        self.assertEqual(classify("TRANSFERENCIA A TRADE REPUBLIC", -500, [])[0], INTERNAL)
+        self.assertEqual(classify("Nómina ACME", 2000, [])[0], "Salary")
+
+    def test_short_pattern_needs_whole_word(self):
+        self.assertEqual(classify("MEDIA MARKT", -5, [])[0], UNCATEGORIZED)  # not "dia"
+        self.assertEqual(classify("SUPERMERCADOS DIA", -5, [])[0], "Groceries")
+
+    def test_specific_beats_generic(self):
+        self.assertEqual(classify("UBER EATS", -9, [])[0], "Restaurants & bars")
+        self.assertEqual(classify("UBER TRIP", -9, [])[0], "Transport")
+        self.assertEqual(classify("AMAZON PRIME", -5, [])[0], "Subscriptions")
+
+    def test_user_rule_beats_default(self):
+        self.assertEqual(classify("MERCADONA", -20, [("mercadona", "Kids")]), ("Kids", "user"))
+
+
+class DbFlowTests(IsolatedHome):
+    def setUp(self):
+        super().setUp()
+        self.db = Database("pw")
+        run_sync(self.db, {}, ["demo"])
+
+    def test_demo_is_categorized_but_leaves_unclear_ones(self):
+        queue = categorize.review_queue(self.db)
+        keys = {g["key"] for g in queue}
+        self.assertTrue(any("xyz" in k for k in keys))
+        self.assertTrue(any("taller" in k for k in keys))
+        self.assertNotIn("mercadona madrid", keys)
+
+    def test_rule_resolves_queue_and_survives_resync(self):
+        n = categorize.add_rule(self.db, "xyz servicios", "Shopping")
+        self.assertGreater(n, 0)
+        self.assertFalse(any("xyz" in g["key"] for g in categorize.review_queue(self.db)))
+        run_sync(self.db, {}, ["demo"])
+        self.assertFalse(any("xyz" in g["key"] for g in categorize.review_queue(self.db)))
+
+    def test_manual_choice_is_never_overwritten_by_rules(self):
+        tx = self.db.conn.execute(
+            "SELECT id FROM transactions WHERE description LIKE '%MERCADONA%' LIMIT 1").fetchone()[0]
+        categorize.set_manual(self.db, tx, "Kids")
+        categorize.add_rule(self.db, "mercadona", "Other")
+        cat = self.db.conn.execute("SELECT category FROM transactions WHERE id=?", (tx,)).fetchone()[0]
+        self.assertEqual(cat, "Kids")
+
+    def test_delete_rule_reverts(self):
+        categorize.add_rule(self.db, "xyz servicios", "Shopping")
+        categorize.delete_rule(self.db, "xyz servicios")
+        self.assertTrue(any("xyz" in g["key"] for g in categorize.review_queue(self.db)))
+
+    def test_internal_transfers_excluded_from_totals(self):
+        flow = analysis.monthly_cashflow(self.db, 12)
+        spent = sum(m["spending"] for m in flow)
+        raw = self.db.conn.execute("SELECT SUM(-amount) FROM transactions WHERE amount<0").fetchone()[0]
+        self.assertLess(spent, raw)
+        cats = {c["category"] for m in flow for c in analysis.spending_by_category(self.db, m["month"])}
+        self.assertNotIn(INTERNAL, cats)
+
+    def test_spending_view(self):
+        s = analysis.spending(self.db)
+        self.assertEqual(s["month"], s["months"][0])
+        self.assertAlmostEqual(sum(c["total"] for c in s["categories"]), s["total"], places=1)
+        self.assertGreater(s["unclear"], 0)
+
+    def test_migration_adds_column_to_old_database(self):
+        db = Database("pw")
+        db.conn.execute("ALTER TABLE transactions DROP COLUMN cat_source")
+        db._migrate()
+        cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(transactions)")}
+        self.assertIn("cat_source", cols)
+
+
+class ApiTests(IsolatedHome):
+    def setUp(self):
+        super().setUp()
+        db = Database("pw")
+        run_sync(db, {}, ["demo"])
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(db, {}))
+        self.port = self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.srv.shutdown()
+        super().tearDown()
+
+    def call(self, path, body=None, headers=None):
+        h = dict(headers or {})
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode()
+            h.setdefault("X-Requested-With", "finances")
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=data, headers=h)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    def test_review_categorize_roundtrip(self):
+        code, queue = self.call("/api/review")
+        self.assertEqual(code, 200)
+        first = queue[0]
+        code, res = self.call("/api/categorize", {"pattern": first["pattern"], "category": "Other"})
+        self.assertEqual(code, 200)
+        self.assertGreater(res["changed"], 0)
+        self.assertNotIn(first["key"], {g["key"] for g in self.call("/api/review")[1]})
+        self.assertIn(["Other"], [[r["category"]] for r in self.call("/api/rules")[1]])
+
+    def test_validation_and_csrf(self):
+        self.assertEqual(self.call("/api/categorize", {"pattern": "x", "category": ""})[0], 400)
+        self.assertEqual(self.call("/api/categorize", {"tx_id": "nope", "category": "A"})[0], 400)
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/categorize",
+                                     data=b"{}", method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req)
+        self.assertEqual(ctx.exception.code, 403)
+
+    def test_transactions_filter(self):
+        code, txs = self.call("/api/transactions?category=Salary&limit=3")
+        self.assertEqual(code, 200)
+        self.assertTrue(txs and all(t["category"] == "Salary" for t in txs))
+        self.assertEqual(self.call("/api/transactions?limit=abc")[0], 400)
+
+
+if __name__ == "__main__":
+    unittest.main()

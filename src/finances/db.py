@@ -23,6 +23,23 @@ CREATE TABLE IF NOT EXISTS transactions (
     category TEXT NOT NULL DEFAULT 'uncategorized'
 );
 CREATE INDEX IF NOT EXISTS tx_date ON transactions(date);
+CREATE TABLE IF NOT EXISTS rules (
+    pattern TEXT PRIMARY KEY,      -- normalized words, matched against transaction text
+    category TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS fund_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    initial REAL NOT NULL DEFAULT 0,
+    monthly REAL NOT NULL DEFAULT 0,
+    annual_rate REAL NOT NULL DEFAULT 0.03,
+    years INTEGER NOT NULL DEFAULT 18,
+    contribution_growth REAL NOT NULL DEFAULT 0,
+    tax_rate REAL NOT NULL DEFAULT 0,
+    target REAL,
+    link_account_id TEXT
+);
 CREATE TABLE IF NOT EXISTS holdings (
     account_id TEXT NOT NULL REFERENCES accounts(id),
     symbol TEXT NOT NULL,
@@ -43,6 +60,12 @@ class Database:
         if path.exists():
             self.conn.deserialize(vault.decrypt(passphrase, path.read_bytes()))
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(transactions)")}
+        if "cat_source" not in cols:  # '' auto/unset, 'default', 'user' (rule), 'manual' (one entry)
+            self.conn.execute("ALTER TABLE transactions ADD COLUMN cat_source TEXT NOT NULL DEFAULT ''")
 
     def save(self) -> None:
         self.conn.commit()

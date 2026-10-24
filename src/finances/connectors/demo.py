@@ -4,13 +4,27 @@ from datetime import date, datetime, timedelta, timezone
 
 from .base import Connector, Snapshot
 
-_CATEGORIES = {
-    "Groceries": (-95, -12),
-    "Restaurants": (-60, -9),
-    "Transport": (-40, -3),
-    "Subscriptions": (-18, -5),
-    "Shopping": (-120, -15),
-}
+_SHOPS = [
+    ("COMPRA TARJ. 5540XXXX MERCADONA MADRID", (-95, -12), 0.14),
+    ("COMPRA TARJ. 5540XXXX CARREFOUR EXPRESS", (-45, -8), 0.06),
+    ("PAGO MOVIL EN GLOVO", (-35, -12), 0.05),
+    ("COMPRA TARJ. 5540XXXX RESTAURANTE EL RINCON", (-60, -20), 0.05),
+    ("COMPRA TARJ. 5540XXXX REPSOL ESTACION", (-70, -35), 0.04),
+    ("COMPRA TARJ. 5540XXXX AMAZON EU", (-120, -10), 0.05),
+    ("COMPRA TARJ. 5540XXXX CAFETERIA LA ESQUINA", (-9, -2), 0.1),
+    ("COMPRA TARJ. 5540XXXX PAGO XYZ SERVICIOS SL", (-40, -15), 0.02),  # unclear on purpose
+    ("COMPRA TARJ. 5540XXXX TALLER PEPE 4471", (-180, -60), 0.008),    # unclear on purpose
+]
+_MONTHLY = [  # (day of month, description, amount or (min, max))
+    (1, "ALQUILER VIVIENDA", -750.0),
+    (3, "BASIC-FIT GIMNASIO", -39.90),
+    (5, "NETFLIX.COM", -12.99),
+    (12, "SPOTIFY AB", -10.99),
+    (15, "RECIBO IBERDROLA CLIENTES", (-82.0, -48.0)),
+    (20, "RECIBO MOVISTAR", -49.90),
+    (28, "NOMINA ACME SL", 2400.0),
+    (29, "TRANSFERENCIA A TRADE REPUBLIC", -300.0),
+]
 
 
 class DemoConnector(Connector):
@@ -36,22 +50,26 @@ class DemoConnector(Connector):
         ]
         today = date.today()
         n = 0
-        for back in range(180):
+        for back in range(210):
             day = today - timedelta(days=back)
-            if day.day == 28:
-                snap.transactions.append(self._tx(n := n + 1, "demo-current", day, 2400.0,
-                                                  "Salary", "Income"))
-            if day.day == 1:
-                snap.transactions.append(self._tx(n := n + 1, "demo-current", day, -750.0,
-                                                  "Rent", "Housing"))
-            for cat, (hi, lo) in _CATEGORIES.items():
-                if rng.random() < 0.12:
-                    amt = round(rng.uniform(hi, lo), 2)
-                    snap.transactions.append(self._tx(n := n + 1, "demo-card", day, amt,
-                                                      f"{cat} purchase", cat))
+            for dom, desc, amount in _MONTHLY:
+                if day.day == dom:
+                    if isinstance(amount, tuple):
+                        amount = round(rng.uniform(*amount), 2)
+                    n += 1
+                    snap.transactions.append(self._tx(n, "demo-current", day, amount, desc))
+            if day.day == 17 and rng.random() < 0.5:
+                n += 1
+                snap.transactions.append(self._tx(n, "demo-current", day, 25.0, "BIZUM DE ANA GARCIA"))
+            for desc, (hi, lo), prob in _SHOPS:
+                if rng.random() < prob:
+                    n += 1
+                    snap.transactions.append(self._tx(n, "demo-card", day,
+                                                      round(rng.uniform(hi, lo), 2), desc))
         return snap
 
     @staticmethod
-    def _tx(n, account, day, amount, desc, cat):
-        return dict(id=f"demo-{n}", account_id=account, date=day.isoformat(),
-                    amount=amount, description=desc, category=cat)
+    def _tx(n, account, day, amount, desc):
+        # Always 'uncategorized': the real categorizer decides, as for a real bank.
+        return dict(id=f"demo-{n}", account_id=account, date=day.isoformat(), amount=amount,
+                    description=desc, category="uncategorized")
