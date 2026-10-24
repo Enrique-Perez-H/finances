@@ -23,6 +23,19 @@ finances --demo serve      # http://localhost:8765
 python -m unittest discover -s tests
 ```
 
+## Tabs
+
+| Tab | What it does |
+|---|---|
+| Overview | Net worth, accounts, monthly cash flow, investments |
+| Spending | Spending per category per month. Entries it cannot classify are put to you in a review queue; each answer becomes a rule applied to past and future entries. You can also fix single entries. |
+| Income | What you receive: salary, transfers, interest, by type, source and month |
+| Recurring | Detected recurring costs and income, monthly and yearly totals, what is coming up |
+| Forecast | Projects income, spending and wealth from your history plus assumptions you set |
+| Fund | Calculator for a savings fund (e.g. for a child): contributions, interest, tax, target, optionally starting from a real account balance |
+
+Everything is computed locally. Internal transfers between your own accounts are excluded from spending and income.
+
 ## Status
 
 | Piece | State |
@@ -34,4 +47,5 @@ python -m unittest discover -s tests
 | Santander connector (Enable Banking, balances + transactions) | done, untested against the real API |
 | Revolut | not planned for now |
 | 2FA code prompt in the UI (`NeedsInput`) | done |
-| Categorisation rules, richer estimates | TODO |
+| Spending categories, review queue, income, recurring, forecast, fund tabs | done (v0.2 to v0.5) |
+| Compare fund plan against real contributions | idea |

@@ -6,6 +6,7 @@ const TABS = [
   ['income', 'Income'],
   ['recurring', 'Recurring'],
   ['forecast', 'Forecast'],
+  ['fund', 'Fund'],
 ];
 const loaded = {};
 let current = localStorage.getItem('tab') || 'overview';

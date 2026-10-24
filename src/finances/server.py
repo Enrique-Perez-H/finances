@@ -10,7 +10,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis, categorize, config, forecast, income, recurring
+from . import analysis, categorize, config, forecast, fund, income, recurring
 from .db import Database
 from .sync import run_sync
 
@@ -49,6 +49,7 @@ GET_ROUTES = {
         invest_share=_num(q, "invest_share", 0), extra_income=_num(q, "extra_income", 0),
         extra_cost=_num(q, "extra_cost", 0),
         include_other_income=_q(q, "other_income", "1") != "0"),
+    "/api/funds": lambda db, q: fund.list_plans(db),
     "/api/review": lambda db, q: categorize.review_queue(db),
     "/api/categories": lambda db, q: categorize.all_categories(db),
     "/api/rules": lambda db, q: [dict(r) for r in db.conn.execute(
@@ -73,8 +74,23 @@ def _post_delete_rule(db, body):
     return {"changed": changed}
 
 
+def _post_fund_save(db, body):
+    plan = fund.save_plan(db, body)
+    db.save()
+    return plan
+
+
+def _post_fund_delete(db, body):
+    fund.delete_plan(db, body.get("id"))
+    db.save()
+    return {"ok": True}
+
+
 # POST routes: (db, body) -> JSON-able. These change local data only.
 POST_ROUTES = {
+    "/api/funds": _post_fund_save,
+    "/api/funds/delete": _post_fund_delete,
+    "/api/funds/preview": lambda db, body: fund.preview(db, body),
     "/api/categorize": _post_categorize,
     "/api/rules/delete": _post_delete_rule,
 }

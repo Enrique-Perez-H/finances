@@ -56,9 +56,9 @@ export function lineChart(series, labels = []) {
     points: s.values.map((v, i) => `${x(i)},${y(v)}`).join(' '),
     class: `line s${k}`, fill: 'none'})));
   if (labels.length) {
-    [[0, 'start'], [labels.length - 1, 'end']].forEach(([i, anchor]) => {
+    [[0, labels[0], 'start'], [n - 1, labels[labels.length - 1], 'end']].forEach(([i, text, anchor]) => {
       const t = svgEl('text', {x: x(i), y: H + 11, 'text-anchor': anchor, class: 'tick'});
-      t.textContent = labels[i];
+      t.textContent = text;
       svg.append(t);
     });
   }
