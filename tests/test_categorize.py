@@ -67,6 +67,36 @@ class MccAndTransferTests(IsolatedHome):
         self.assertIn("mcc", {r["name"] for r in db.conn.execute("PRAGMA table_info(transactions)")})
 
 
+class RealWorldTests(IsolatedHome):
+    def test_random_reference_codes_do_not_split_groups(self):
+        self.assertEqual(merchant_key("INTERMON BBPZCBG"), merchant_key("INTERMON BBQDDLK"))
+        self.assertEqual(classify("INTERMON BBPZCBG", -15, [])[0], "Donations")
+
+    def test_local_shops(self):
+        for text, cat in (("GUISSONA LES", "Groceries"), ("TASCA MOLINESA", "Restaurants & bars"),
+                          ("COLCHONES AZNAR", "Shopping"), ("JACA SALUD", "Health"),
+                          ("COMPLEJ PISCINA", "Sports & leisure"), ("CC ARAGONIA", "Shopping")):
+            self.assertEqual(classify(text, -10, [])[0], cat, text)
+
+    def test_contactless_is_generic_and_asked_one_by_one(self):
+        db = Database("pw")
+        db.upsert_account(dict(id="a", provider="t", name="A", kind="cash", currency="EUR",
+                               balance=0, updated_at="t"))
+        for i, amt in enumerate((-5.0, -40.0, -12.0)):
+            db.upsert_transaction(dict(id=f"c{i}", account_id="a", date="2026-01-0%d" % (i + 1),
+                                       amount=amt, description="TRANSACCION CONTACTLESS",
+                                       category="uncategorized"))
+        categorize.categorize_all(db)
+        self.assertEqual(categorize.review_queue(db), [])  # no shared rule suggested
+        g = categorize.generic_entries(db)
+        self.assertEqual(g["total"], 3)
+        self.assertEqual([e["amount"] for e in g["entries"]], [-40.0, -12.0, -5.0])
+        categorize.set_manual(db, "c1", "Groceries")
+        self.assertEqual(categorize.generic_entries(db)["total"], 2)
+        # a manual choice for one does not touch the others
+        self.assertEqual(db.conn.execute("SELECT COUNT(*) FROM transactions WHERE category='Groceries'").fetchone()[0], 1)
+
+
 class DbFlowTests(IsolatedHome):
     def setUp(self):
         super().setUp()

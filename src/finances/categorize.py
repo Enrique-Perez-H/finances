@@ -17,7 +17,8 @@ INCOME_CATEGORIES = ["Salary", "Transfers received", "Interest & dividends", "Re
 EXPENSE_CATEGORIES = [
     "Groceries", "Restaurants & bars", "Transport", "Fuel", "Housing", "Utilities", "Telecom",
     "Subscriptions", "Health", "Shopping", "Entertainment", "Travel", "Education", "Insurance",
-    "Taxes", "Cash withdrawals", "Fees & interest", "Kids", "Transfers sent", "Other"]
+    "Taxes", "Cash withdrawals", "Fees & interest", "Kids", "Donations", "Sports & leisure",
+    "Transfers sent", "Other"]
 
 # (pattern, category when money goes out, category when money comes in or None = Refunds)
 DEFAULT_RULES = [
@@ -51,7 +52,6 @@ DEFAULT_RULES = [
     ("google one", "Subscriptions", None), ("openai", "Subscriptions", None),
     ("anthropic", "Subscriptions", None), ("dazn", "Subscriptions", None),
     ("audible", "Subscriptions", None), ("patreon", "Subscriptions", None),
-    ("gimnasio", "Health", None), ("basic fit", "Health", None), ("vivagym", "Health", None),
     ("farmacia", "Health", None), ("clinica", "Health", None), ("hospital", "Health", None),
     ("dentista", "Health", None), ("sanitas", "Health", None), ("adeslas", "Health", None),
     ("optica", "Health", None),
@@ -79,6 +79,33 @@ DEFAULT_RULES = [
     ("interes", "Fees & interest", "Interest & dividends"),
     ("intereses", "Fees & interest", "Interest & dividends"),
     ("guarderia", "Kids", None), ("kiabi", "Kids", None), ("toysrus", "Kids", None),
+    # local shops and common Spanish business words
+    ("guissona", "Groceries", None), ("bonarea", "Groceries", None), ("panaderia", "Groceries", None),
+    ("carniceria", "Groceries", None), ("pescaderia", "Groceries", None), ("charcuteria", "Groceries", None),
+    ("ultramarinos", "Groceries", None), ("pasteleria", "Groceries", None), ("horno", "Groceries", None),
+    ("formatges", "Groceries", None), ("queseria", "Groceries", None), ("herbolario", "Groceries", None),
+    ("tasca", "Restaurants & bars", None), ("taberna", "Restaurants & bars", None),
+    ("bar", "Restaurants & bars", None), ("cerveceria", "Restaurants & bars", None),
+    ("asador", "Restaurants & bars", None), ("noodles", "Restaurants & bars", None),
+    ("sushi", "Restaurants & bars", None), ("kebab", "Restaurants & bars", None),
+    ("burger", "Restaurants & bars", None), ("meson", "Restaurants & bars", None),
+    ("restaurant", "Restaurants & bars", None), ("tapas", "Restaurants & bars", None),
+    ("bodega", "Restaurants & bars", None), ("heladeria", "Restaurants & bars", None),
+    ("pub", "Restaurants & bars", None), ("carnivore", "Restaurants & bars", None),
+    ("calzados", "Shopping", None), ("zapateria", "Shopping", None), ("colchones", "Shopping", None),
+    ("joyeria", "Shopping", None), ("boutique", "Shopping", None), ("women secret", "Shopping", None),
+    ("women secrets", "Shopping", None), ("ferreteria", "Shopping", None), ("papeleria", "Shopping", None),
+    ("libreria", "Shopping", None), ("muebles", "Shopping", None), ("cc", "Shopping", None),
+    ("centro comercial", "Shopping", None), ("estanco", "Other", None),
+    ("salud", "Health", None), ("fisioterapia", "Health", None), ("podologo", "Health", None),
+    ("veterinario", "Health", None), ("dental", "Health", None), ("parafarmacia", "Health", None),
+    ("piscina", "Sports & leisure", None), ("polideportivo", "Sports & leisure", None),
+    ("padel", "Sports & leisure", None), ("gimnasio", "Sports & leisure", None),
+    ("basic fit", "Sports & leisure", None), ("vivagym", "Sports & leisure", None),
+    ("intermon", "Donations", None), ("oxfam", "Donations", None), ("unicef", "Donations", None),
+    ("cruz roja", "Donations", None), ("greenpeace", "Donations", None), ("acnur", "Donations", None),
+    ("medicos sin fronteras", "Donations", None), ("save the children", "Donations", None),
+    ("fundacion", "Donations", None),
     ("bizum", "Transfers sent", "Transfers received"),
     ("transferencia", "Transfers sent", "Transfers received"),
     ("trade republic", INTERNAL, INTERNAL), ("traderepublic", INTERNAL, INTERNAL),
@@ -135,12 +162,27 @@ def normalize(text: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9&]+", " ", text).split())
 
 
+# Descriptions that name no merchant: a rule on them would label every such payment alike.
+GENERIC_KEYS = {"transaccion contactless", "transaccion", "pago contactless", "compra contactless",
+                "contactless", "operacion tarjeta", "pago tarjeta", "compra tarjeta"}
+
+
+def _looks_random(word: str) -> bool:
+    """Reference codes like 'bbpzcbg': long, almost no vowels."""
+    return len(word) >= 5 and sum(c in "aeiou" for c in word) / len(word) < 0.2
+
+
 def merchant_key(text: str) -> str:
     """Short, stable label for grouping similar entries: first two meaningful words."""
     words = [w for w in normalize(text).split()
              if w not in _NOISE and not (any(c.isdigit() for c in w) and len(w) >= 3)
              and not set(w) <= {"x"}]
-    return " ".join(words[:2])
+    kept = [w for w in words if not _looks_random(w)] or words
+    return " ".join(kept[:2])
+
+
+def is_generic(key: str) -> bool:
+    return key in GENERIC_KEYS
 
 
 def suggest_pattern(key: str) -> str:
@@ -199,9 +241,19 @@ def review_queue(db: Database, limit: int = 30) -> list[dict]:
         g["sample"] = r["description"]
         g["last"] = r["date"]
     out = [dict(key=k, pattern=suggest_pattern(k), count=g["count"], total=round(g["total"], 2),
-                sample=g["sample"], last=g["last"]) for k, g in groups.items()]
+                sample=g["sample"], last=g["last"], generic=False)
+           for k, g in groups.items() if not is_generic(k)]
     out.sort(key=lambda g: -abs(g["total"]))
     return out[:limit]
+
+
+def generic_entries(db: Database, limit: int = 15) -> dict:
+    """Uncategorized entries that name no merchant (e.g. 'contactless'): one by one."""
+    rows = [r for r in db.conn.execute(
+        "SELECT id, date, amount, description FROM transactions WHERE category=?"
+        " ORDER BY ABS(amount) DESC", (UNCATEGORIZED,))
+        if is_generic(merchant_key(r["description"]) or normalize(r["description"]))]
+    return dict(total=len(rows), entries=[dict(r) for r in rows[:limit]])
 
 
 def add_rule(db: Database, pattern: str, category: str) -> int:

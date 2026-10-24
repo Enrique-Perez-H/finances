@@ -6,9 +6,9 @@ let month = null;
 let openCategory = null;
 
 export async function render(root) {
-  const [s, review, cats, rules] = await Promise.all([
+  const [s, review, cats, rules, generic] = await Promise.all([
     get('/api/spending' + (month ? `?month=${month}` : '')), get('/api/review'),
-    get('/api/categories'), get('/api/rules')]);
+    get('/api/categories'), get('/api/rules'), get('/api/review/generic')]);
   month = s.month;
   const reload = () => render(root);
 
@@ -22,6 +22,7 @@ export async function render(root) {
     delta === null ? null : note(`${delta >= 0 ? '+' : ''}${eur(delta)} vs ${s.previous_month}`))];
 
   if (review.length) parts.push(reviewCard(review, cats, reload, s.unclear));
+  if (generic.total) parts.push(genericCard(generic, reload));
 
   const max = s.categories.length ? s.categories[0].total : 0;
   parts.push(card('By category', ...s.categories.map(c => {
@@ -74,4 +75,18 @@ function rulesCard(rules, reload) {
   return card('Your rules', ...rules.map(r => el('div', {className: 'row'},
     el('span', {textContent: `"${r.pattern}" → ${r.category}`}),
     button('✕', async () => { await post('/api/rules/delete', {pattern: r.pattern}); reload(); }, 'ghost'))));
+}
+
+function genericCard(generic, reload) {
+  const items = generic.entries.map(e => {
+    const chips = el('div', {className: 'chips'}, ...QUICK.map(c => button(c, async () => {
+      await post('/api/categorize', {tx_id: e.id, category: c});
+      reload();
+    }, 'chip')));
+    return el('div', {className: 'review'},
+      row(`${e.date} · ${e.description.slice(0, 28)}`, eur2(e.amount), 'neg'), chips);
+  });
+  return card(`No shop name (${generic.total} entries)`,
+    note('The bank gives no merchant for these (e.g. contactless), so a rule would label them all the same. They are asked one by one, biggest first.'),
+    ...items, generic.total > items.length ? note(`${generic.total - items.length} more after these.`) : null);
 }

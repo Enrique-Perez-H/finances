@@ -51,6 +51,7 @@ GET_ROUTES = {
         include_other_income=_q(q, "other_income", "1") != "0"),
     "/api/funds": lambda db, q: fund.list_plans(db),
     "/api/review": lambda db, q: categorize.review_queue(db),
+    "/api/review/generic": lambda db, q: categorize.generic_entries(db),
     "/api/categories": lambda db, q: categorize.all_categories(db),
     "/api/rules": lambda db, q: [dict(r) for r in db.conn.execute(
         "SELECT pattern, category FROM rules ORDER BY pattern")],
