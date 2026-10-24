@@ -31,6 +31,7 @@ python -m unittest discover -s tests
 | Demo connector | done |
 | Trade Republic connector (`pytr`): cash and holdings, session kept encrypted | done, untested against a real account |
 | Trade Republic transaction history | TODO |
-| Santander / Revolut connector (Enable Banking) | TODO |
+| Santander connector (Enable Banking, balances + transactions) | done, untested against the real API |
+| Revolut | not planned for now |
 | 2FA code prompt in the UI (`NeedsInput`) | done |
 | Categorisation rules, richer estimates | TODO |

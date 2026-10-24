@@ -51,7 +51,8 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             if path == "/api/summary":
                 with lock:
                     return self._json(200, analysis.summary(db))
-            name = "index.html" if path == "/" else path.lstrip("/")
+            # /callback is where the bank sends you back; the page reads the code from the address
+            name = "index.html" if path in ("/", "/callback") else path.lstrip("/")
             file = (WEB / name).resolve()
             if WEB.resolve() not in file.parents or not file.is_file():
                 return self._json(404, {"error": "not found"})

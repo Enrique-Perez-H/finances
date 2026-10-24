@@ -19,6 +19,9 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8765)
     forget = sub.add_parser("forget", help="delete all stored data of one provider (e.g. demo)")
     forget.add_argument("provider")
+    sf = sub.add_parser("secret-file", help="store a file's contents (e.g. a .pem key) as a secret")
+    sf.add_argument("key")
+    sf.add_argument("path")
     sec = sub.add_parser("secret", help="store a secret in the encrypted vault")
     sec.add_argument("key")
     args = p.parse_args(argv)
@@ -49,6 +52,13 @@ def _sync_interactive(db, secrets, sources, passphrase):
 def _run(args):
     passphrase = config.get_passphrase()
     secrets = config.load_secrets(passphrase)
+
+    if args.cmd == "secret-file":
+        with open(os.path.expanduser(args.path)) as f:
+            secrets[args.key] = f.read()
+        config.save_secrets(passphrase, secrets)
+        print(f"Saved. You can now delete {args.path}.")
+        return 0
 
     if args.cmd == "secret":
         import getpass

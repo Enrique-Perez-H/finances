@@ -61,10 +61,15 @@ async function sync(inputs = {}) {
     const parts = [];
     for (const [name, v] of Object.entries(s)) {
       if (v.state === 'needs_input' && v.field) {
-        const input = el('input', {type: 'text', inputMode: 'numeric', autocomplete: 'one-time-code', placeholder: 'code'});
+        const input = el('input', {type: 'text', autocomplete: 'one-time-code',
+          placeholder: v.url ? 'paste address or code' : 'code'});
         const go = el('button', {textContent: 'Send'});
         go.addEventListener('click', () => sync({[name]: input.value.trim()}));
-        parts.push(el('div', {}, `${name}: ${v.prompt} `, input, go));
+        const kids = [`${name}: ${v.prompt} `];
+        if (v.url && v.url.startsWith('https://')) {
+          kids.push(el('a', {href: v.url, target: '_blank', rel: 'noopener', textContent: 'Open bank'}), ' ');
+        }
+        parts.push(el('div', {}, ...kids, input, go));
       } else if (v.state === 'needs_input') {
         parts.push(el('div', {textContent: `${name}: ${v.prompt}`}));
       } else {
@@ -80,3 +85,10 @@ async function sync(inputs = {}) {
 document.getElementById('sync').addEventListener('click', () => sync());
 
 load();
+
+// Returning from the bank: /callback?code=...&state=... -> hand the address to the connector.
+if (location.pathname === '/callback') {
+  const address = location.href;
+  history.replaceState(null, '', '/');
+  sync({enable_banking: address});
+}

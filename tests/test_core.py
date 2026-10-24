@@ -41,7 +41,7 @@ class DbAndAnalysisTests(IsolatedHome):
         with self.assertRaises(vault.WrongPassphrase):
             Database("wrong")
 
-    def test_sync_is_idempotent_and_reports_unimplemented(self):
+    def test_sync_is_idempotent_and_reports_missing_credentials(self):
         db = Database("pw")
         run_sync(db, {}, ["demo"])
         n = db.conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
@@ -49,7 +49,7 @@ class DbAndAnalysisTests(IsolatedHome):
         self.assertEqual(db.conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0], n)
         self.assertEqual(status["trade_republic"]["state"], "error")  # no credentials configured
         self.assertIn("tr_phone", status["trade_republic"]["error"])
-        self.assertEqual(run_sync(db, {}, ["enable_banking"])["enable_banking"]["state"], "unavailable")
+        self.assertIn("eb_app_id", run_sync(db, {}, ["enable_banking"])["enable_banking"]["error"])
 
     def test_delete_provider_removes_only_that_provider(self):
         db = Database("pw")
@@ -102,6 +102,11 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.req("/api/sync", "POST")[0], 403)
         self.assertEqual(self.req("/api/sync", "POST", {"X-Requested-With": "finances"})[0], 200)
         self.assertEqual(self.req("/api/summary", headers={"Host": "evil.example"})[0], 403)
+
+    def test_callback_serves_dashboard(self):
+        code, body = self.req("/callback?code=x&state=y")
+        self.assertEqual(code, 200)
+        self.assertIn(b"<title>Finances</title>", body)
 
     def test_no_path_traversal(self):
         self.assertEqual(self.req("/../config.py")[0], 404)

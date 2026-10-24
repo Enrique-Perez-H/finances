@@ -1,0 +1,175 @@
+import json
+import unittest
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+
+from finances.connectors.base import NeedsInput
+from finances.connectors.enable_banking import (
+    EnableBankingConnector, EnableBankingError, extract_code, make_jwt, map_transaction)
+
+NOW = datetime(2026, 1, 10, tzinfo=timezone.utc)
+KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+PEM = KEY.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                        serialization.NoEncryption()).decode()
+
+
+class FakeBank:
+    def __init__(self):
+        self.calls = []
+        self.dead = False
+
+    def __call__(self, method, path, body=None, params=None):
+        self.calls.append((method, path, body, params))
+        if path == "/aspsps":
+            return {"aspsps": [{"name": "Santander", "country": "ES",
+                                "maximum_consent_validity": 90 * 86400},
+                               {"name": "Santander Consumer", "country": "ES"}]}
+        if path == "/auth":
+            return {"url": "https://bank.example/approve"}
+        if path == "/sessions":
+            return {"session_id": "s1", "aspsp": {"name": "Santander"},
+                    "access": {"valid_until": (NOW + timedelta(days=89)).isoformat()},
+                    "accounts": [
+                        {"uid": "u1", "identification_hash": "abcdef1234567890", "currency": "EUR",
+                         "cash_account_type": "CACC", "product": "Cuenta",
+                         "account_id": {"iban": "ES9121000418450200051332"}},
+                        {"uid": "u2", "identification_hash": "zzzzzzzzzzzzzzzz", "currency": "EUR",
+                         "cash_account_type": "LOAN"}]}
+        if self.dead:
+            raise EnableBankingError(403)
+        if path.endswith("/balances"):
+            return {"balances": [
+                {"balance_type": "ITAV", "balance_amount": {"amount": "999", "currency": "EUR"}},
+                {"balance_type": "CLBD", "balance_amount": {"amount": "1500.25", "currency": "EUR"}}]}
+        if path.endswith("/transactions"):
+            if params.get("continuation_key") == "k2":
+                return {"transactions": [self.tx("-5.00", "DBIT", "2026-01-02", "Cafe")]}
+            return {"transactions": [
+                self.tx("20.00", "DBIT", "2026-01-03", "Mercadona"),
+                self.tx("20.00", "DBIT", "2026-01-03", "Mercadona"),
+                self.tx("2000", "CRDT", "2026-01-01", "Payroll", name="Employer", ref="T9"),
+                {**self.tx("1", "DBIT", "2026-01-04", "pending"), "status": "PDNG"}],
+                "continuation_key": "k2"}
+        raise AssertionError(path)
+
+    @staticmethod
+    def tx(amount, ind, date, remit, name=None, ref=None):
+        d = {"transaction_amount": {"amount": amount, "currency": "EUR"},
+             "credit_debit_indicator": ind, "status": "BOOK", "booking_date": date,
+             "remittance_information": [remit]}
+        if name:
+            d["debtor" if ind == "CRDT" else "creditor"] = {"name": name}
+        if ref:
+            d["transaction_id"] = ref
+        return d
+
+
+def make(secrets=None, bank=None):
+    s = {"eb_app_id": "app", "eb_private_key": PEM, **(secrets or {})}
+    return EnableBankingConnector(s, http=bank or FakeBank(), now=lambda: NOW), s
+
+
+class HelpersTests(unittest.TestCase):
+    def test_jwt_is_rs256_and_verifiable(self):
+        import base64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        token = make_jwt("app-id", PEM, NOW)
+        h, p, sig = token.split(".")
+        pad = lambda x: x + "=" * (-len(x) % 4)  # noqa: E731
+        self.assertEqual(json.loads(base64.urlsafe_b64decode(pad(h))),
+                         {"typ": "JWT", "alg": "RS256", "kid": "app-id"})
+        claims = json.loads(base64.urlsafe_b64decode(pad(p)))
+        self.assertEqual(claims["aud"], "api.enablebanking.com")
+        self.assertLessEqual(claims["exp"] - claims["iat"], 86400)
+        KEY.public_key().verify(base64.urlsafe_b64decode(pad(sig)), f"{h}.{p}".encode(),
+                                padding.PKCS1v15(), hashes.SHA256())
+
+    def test_extract_code(self):
+        self.assertEqual(extract_code(" abc "), "abc")
+        self.assertEqual(extract_code("http://localhost:8765/callback?code=XYZ&state=s1", "s1"), "XYZ")
+        with self.assertRaises(ValueError):
+            extract_code("http://x/cb?code=XYZ&state=other", "s1")
+        with self.assertRaises(ValueError):
+            extract_code("http://x/cb?error=access_denied")
+
+    def test_map_transaction_signs_and_duplicates(self):
+        seen = Counter()
+        a = map_transaction(FakeBank.tx("20.00", "DBIT", "2026-01-03", "Shop"), "acc", seen)
+        b = map_transaction(FakeBank.tx("20.00", "DBIT", "2026-01-03", "Shop"), "acc", seen)
+        self.assertEqual(a["amount"], -20.0)
+        self.assertNotEqual(a["id"], b["id"])
+        self.assertIsNone(map_transaction({**FakeBank.tx("1", "DBIT", "2026-01-01", "x"),
+                                           "status": "PDNG"}, "acc", seen))
+
+
+class ConnectorTests(unittest.TestCase):
+    def test_missing_secrets(self):
+        with self.assertRaises(RuntimeError):
+            EnableBankingConnector({}).fetch()
+
+    def test_first_run_asks_for_approval_with_bank_and_validity(self):
+        c, _ = make()
+        with self.assertRaises(NeedsInput) as ctx:
+            c.fetch()
+        self.assertEqual(ctx.exception.url, "https://bank.example/approve")
+        self.assertEqual(ctx.exception.field, "code")
+        auth = [x for x in c._http.calls if x[1] == "/auth"][0][2]
+        self.assertEqual(auth["aspsp"], {"name": "Santander", "country": "ES"})
+        self.assertEqual(auth["psu_type"], "personal")
+        valid = datetime.fromisoformat(auth["access"]["valid_until"])
+        self.assertLess(valid - NOW, timedelta(days=90))  # bank's own limit respected
+
+    def test_ambiguous_bank_name_is_reported(self):
+        c, _ = make({"eb_bank": "santand"})
+        c._http = lambda *a, **k: {"aspsps": [{"name": "Santander", "country": "ES"},
+                                              {"name": "Santander Consumer", "country": "ES"}]}
+        with self.assertRaises(RuntimeError):
+            c.fetch()
+
+    def test_full_flow_data_and_session_persisted(self):
+        c, secrets = make()
+        with self.assertRaises(NeedsInput):
+            c.fetch()
+        snap = c.fetch(user_input=f"http://localhost:8765/callback?code=C1&state={c._state}")
+        self.assertEqual(secrets["eb_session"]["session_id"], "s1")
+        self.assertEqual(len(secrets["eb_session"]["accounts"]), 1)  # loan skipped
+        self.assertNotIn("ES9121000418450200051332", json.dumps(secrets["eb_session"]))  # IBAN tail only
+        acct = snap.accounts[0]
+        self.assertEqual(acct["balance"], 1500.25)  # booked balance preferred over available
+        self.assertIn("****1332", acct["name"])
+        self.assertEqual(acct["provider"], "santander")
+        amounts = sorted(t["amount"] for t in snap.transactions)
+        self.assertEqual(amounts, [-20.0, -20.0, -5.0, 2000.0])  # pending dropped, pages merged
+        self.assertEqual(len({t["id"] for t in snap.transactions}), 4)
+        self.assertTrue(secrets["eb_session"]["initial_done"])
+        # second sync: no approval needed, shorter history window
+        calls_before = len(c._http.calls)
+        c.fetch()
+        tx_call = [x for x in c._http.calls[calls_before:] if x[1].endswith("/transactions")][0]
+        self.assertEqual(tx_call[3]["date_from"], (NOW - timedelta(days=60)).date().isoformat())
+
+    def test_expired_session_asks_again(self):
+        c, secrets = make()
+        secrets["eb_session"] = {"session_id": "old", "accounts": [], "initial_done": True,
+                                 "valid_until": (NOW - timedelta(days=1)).isoformat()}
+        with self.assertRaises(NeedsInput):
+            c.fetch()
+
+    def test_revoked_session_restarts_authorization(self):
+        bank = FakeBank()
+        c, secrets = make(bank=bank)
+        with self.assertRaises(NeedsInput):
+            c.fetch()
+        c.fetch(user_input="C1")
+        bank.dead = True
+        with self.assertRaises(NeedsInput):
+            c.fetch()
+        self.assertNotIn("eb_session", secrets)
+
+
+if __name__ == "__main__":
+    unittest.main()
