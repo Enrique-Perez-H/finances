@@ -58,6 +58,12 @@ class DemoConnector(Connector):
                         amount = round(rng.uniform(*amount), 2)
                     n += 1
                     snap.transactions.append(self._tx(n, "demo-current", day, amount, desc))
+            if day.day == 8:  # a bill paid for two, half of it paid back two days later
+                n += 1
+                snap.transactions.append(self._tx(n, "demo-card", day, -62.0, "RESTAURANTE LA PLAZA"))
+            if day.day == 10:
+                n += 1
+                snap.transactions.append(self._tx(n, "demo-current", day, 62.0, "BIZUM DE LUIS PEREZ"))
             if day.day == 17 and rng.random() < 0.5:
                 n += 1
                 snap.transactions.append(self._tx(n, "demo-current", day, 25.0, "BIZUM DE ANA GARCIA"))

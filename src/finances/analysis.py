@@ -1,7 +1,7 @@
 """All computations run locally against the in-memory database."""
 from datetime import date
 
-from .categorize import INTERNAL, UNCATEGORIZED
+from .categorize import INTERNAL, UNCATEGORIZED, merchant_key, normalize, suggest_pattern
 from .db import Database
 
 
@@ -17,7 +17,7 @@ def monthly_cashflow(db: Database, months: int = 6) -> list[dict]:
         "SELECT substr(date,1,7) AS month,"
         " SUM(CASE WHEN amount>0 THEN amount ELSE 0 END) AS income,"
         " SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END) AS spending"
-        " FROM transactions WHERE category != ? GROUP BY month ORDER BY month DESC LIMIT ?",
+        " FROM transactions WHERE category != ? AND paired_with = '' GROUP BY month ORDER BY month DESC LIMIT ?",
         (INTERNAL, months)).fetchall()
     return [dict(month=r["month"], income=round(r["income"], 2),
                  spending=round(r["spending"], 2),
@@ -28,7 +28,7 @@ def spending_by_category(db: Database, month: str | None = None) -> list[dict]:
     month = month or date.today().isoformat()[:7]
     rows = db.conn.execute(
         "SELECT category, SUM(-amount) AS total FROM transactions"
-        " WHERE amount<0 AND category != ? AND substr(date,1,7)=?"
+        " WHERE amount<0 AND category != ? AND paired_with = '' AND substr(date,1,7)=?"
         " GROUP BY category ORDER BY total DESC", (INTERNAL, month)).fetchall()
     return [dict(category=r["category"], total=round(r["total"], 2)) for r in rows]
 
@@ -77,13 +77,14 @@ def spending(db: Database, month: str | None = None) -> dict:
     cats = [dict(category=c, total=t, share=round(t / total, 4) if total else 0,
                  previous=prev.get(c, 0)) for c, t in cur.items()]
     unclear = db.conn.execute(
-        "SELECT COUNT(*) FROM transactions WHERE category=?", (UNCATEGORIZED,)).fetchone()[0]
+        "SELECT COUNT(*) FROM transactions WHERE category=? AND paired_with=''", (UNCATEGORIZED,)).fetchone()[0]
     return dict(month=month, months=months, previous_month=prev_month, total=round(total, 2),
                 previous_total=round(sum(prev.values()), 2), categories=cats, unclear=unclear)
 
 
 def transactions(db: Database, category: str | None, month: str | None, limit: int = 200) -> list[dict]:
-    sql, args = "SELECT id, date, amount, description, category, cat_source FROM transactions WHERE 1=1", []
+    sql, args = ("SELECT id, date, amount, description, category, cat_source FROM transactions"
+                 " WHERE paired_with = ''"), []
     if category:
         sql += " AND category=?"
         args.append(category)
@@ -92,4 +93,8 @@ def transactions(db: Database, category: str | None, month: str | None, limit: i
         args.append(month)
     sql += " ORDER BY date DESC, id LIMIT ?"
     args.append(limit)
-    return [dict(r) for r in db.conn.execute(sql, args)]
+    out = [dict(r) for r in db.conn.execute(sql, args)]
+    for t in out:  # how a rule for this entry would be worded, so the UI can offer "move all like this"
+        t["key"] = merchant_key(t["description"]) or normalize(t["description"])
+        t["pattern"] = suggest_pattern(t["key"])
+    return out

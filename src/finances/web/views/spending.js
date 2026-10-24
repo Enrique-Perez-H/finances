@@ -1,4 +1,4 @@
-import {card, row, el, eur, eur2, pct, get, post, note, button, barRow, categoryInput} from '../ui.js';
+import {card, row, el, eur, eur2, pct, get, post, note, button, barRow, categoryInput, categoryPicker} from '../ui.js';
 
 const QUICK = ['Internal transfer', 'Groceries', 'Restaurants & bars', 'Transport', 'Shopping',
   'Subscriptions', 'Utilities & telecom', 'Health', 'Home & furniture', 'Leisure', 'Other'];
@@ -6,9 +6,9 @@ let month = null;
 let openCategory = null;
 
 export async function render(root) {
-  const [s, review, cats, rules, generic] = await Promise.all([
+  const [s, review, cats, rules, generic, pairs] = await Promise.all([
     get('/api/spending' + (month ? `?month=${month}` : '')), get('/api/review'),
-    get('/api/categories'), get('/api/rules'), get('/api/review/generic')]);
+    get('/api/categories'), get('/api/rules'), get('/api/review/generic'), get('/api/pairs')]);
   month = s.month;
   const reload = () => render(root);
 
@@ -22,16 +22,16 @@ export async function render(root) {
     delta === null ? null : note(`${delta >= 0 ? '+' : ''}${eur(delta)} vs ${s.previous_month}`))];
 
   if (review.length) parts.push(reviewCard(review, cats, reload, s.unclear));
-  if (generic.total) parts.push(genericCard(generic, reload));
+  if (generic.total) parts.push(genericCard(generic, cats, reload));
 
   const max = s.categories.length ? s.categories[0].total : 0;
-  parts.push(card('By category', ...s.categories.map(c => {
-    const body = [barRow(c.category, c.total, max, `${eur(c.total)} · ${pct(c.share)}`,
-      () => { openCategory = openCategory === c.category ? null : c.category; reload(); })];
-    return el('div', {}, ...body);
-  }), note('Tap a category to see and fix its entries.')));
+  parts.push(card('By category', ...s.categories.map(c =>
+    barRow(c.category, c.total, max, `${eur(c.total)} · ${pct(c.share)}`,
+      () => { openCategory = openCategory === c.category ? null : c.category; reload(); })),
+    note('Tap a category to see its shops and move them to another category.')));
 
   if (openCategory) parts.push(await entriesCard(openCategory, month, cats, reload));
+  if (pairs.count) parts.push(pairsCard(pairs, reload));
   parts.push(rulesCard(rules, reload));
   parts.push(categoriesCard(cats, reload));
   root.replaceChildren(...parts);
@@ -40,9 +40,7 @@ export async function render(root) {
 function reviewCard(review, cats, reload, unclear) {
   const items = review.slice(0, 8).map(g => {
     const pattern = el('input', {value: g.pattern, className: 'wide'});
-    const cat = categoryInput(cats);
     const choose = async category => {
-      if (!category.trim()) return;
       await post('/api/categorize', {pattern: pattern.value, category});
       reload();
     };
@@ -50,25 +48,67 @@ function reviewCard(review, cats, reload, unclear) {
     return el('div', {className: 'review'},
       row(g.sample.slice(0, 40), `${eur2(g.total)} · ×${g.count}`),
       el('div', {className: 'muted', textContent: 'Entries containing:'}), pattern,
-      el('div', {className: 'muted', textContent: 'are (tap one, or type another):'}), chips,
-      cat.wrap, button('Apply typed category', () => choose(cat.input.value)));
+      el('div', {className: 'muted', textContent: 'are:'}), chips,
+      categoryPicker(cats, choose, {placeholder: 'Or pick any category…'}));
   });
   return card(`To review (${unclear} entries)`,
     note('I could not classify these. Your answer becomes a rule applied to every matching entry, now and on future syncs.'),
     ...items, review.length > 8 ? note(`${review.length - 8} more after these.`) : null);
 }
 
+function genericCard(generic, cats, reload) {
+  const items = generic.entries.map(e => {
+    const choose = async category => { await post('/api/categorize', {tx_id: e.id, category}); reload(); };
+    const chips = el('div', {className: 'chips'}, ...QUICK.map(c => button(c, () => choose(c), 'chip')));
+    return el('div', {className: 'review'},
+      row(`${e.date} · ${e.description.slice(0, 28)}`, eur2(e.amount), 'neg'), chips,
+      categoryPicker(cats, choose, {placeholder: 'Or pick any category…'}));
+  });
+  return card(`No shop name (${generic.total} entries)`,
+    note('The bank gives no merchant for these (e.g. contactless), so a rule would label them all the same. They are asked one by one, biggest first.'),
+    ...items, generic.total > items.length ? note(`${generic.total - items.length} more after these.`) : null);
+}
+
+// Entries of one category and month, grouped by shop. Move a whole shop (a rule for the
+// future too) or a single entry.
 async function entriesCard(category, month, cats, reload) {
   const txs = await get(`/api/transactions?category=${encodeURIComponent(category)}&month=${month}`);
-  return card(`${category} · ${month}`, ...txs.map(t => {
-    const sel = el('select', {}, ...cats.map(c => el('option', {value: c, textContent: c, selected: c === t.category})));
-    sel.addEventListener('change', async () => {
-      await post('/api/categorize', {tx_id: t.id, category: sel.value});
+  const groups = new Map();
+  for (const t of txs) {
+    const g = groups.get(t.key) ?? {key: t.key, pattern: t.pattern, label: t.description, total: 0, items: []};
+    g.total += t.amount;
+    g.items.push(t);
+    groups.set(t.key, g);
+  }
+  const others = cats.filter(c => c !== category);
+  const list = [...groups.values()].sort((a, b) => a.total - b.total).map(g => {
+    const pattern = el('input', {value: g.pattern, className: 'wide'});
+    const moveAll = categoryPicker(others, async c => {
+      await post('/api/categorize', {pattern: pattern.value, category: c});
       reload();
-    });
-    return el('div', {className: 'review'}, row(t.description.slice(0, 40), eur2(t.amount), t.amount < 0 ? 'neg' : 'pos'),
-      el('div', {className: 'muted', textContent: `${t.date} · this entry only:`}), sel);
-  }));
+    }, {placeholder: `Move all "${g.pattern}" to…`});
+    const entries = g.items.map(t => el('div', {className: 'review'},
+      row(t.description.slice(0, 40), eur2(t.amount), t.amount < 0 ? 'neg' : 'pos'),
+      el('div', {className: 'muted', textContent: `${t.date} · move this entry only:`}),
+      categoryPicker(others, async c => { await post('/api/categorize', {tx_id: t.id, category: c}); reload(); },
+        {placeholder: 'Move to…'})));
+    return el('details', {className: 'group'},
+      el('summary', {}, el('span', {textContent: `${g.label.slice(0, 30)} ×${g.items.length}`}),
+        el('span', {textContent: eur2(g.total)})),
+      el('div', {className: 'muted', textContent: 'Rule for entries containing:'}), pattern, moveAll, ...entries);
+  });
+  return card(`${category} · ${month}`, ...list);
+}
+
+function pairsCard(pairs, reload) {
+  const items = pairs.pairs.map(p => el('div', {className: 'pair'},
+    row(`${p.spend.date} · ${p.spend.description.slice(0, 30)}`, eur2(p.spend.amount), 'neg'),
+    row(`${p.reimbursement.date} · ${p.reimbursement.description.slice(0, 30)}`, eur2(p.reimbursement.amount), 'pos'),
+    button('Not a pair', async () => { await post('/api/pairs/block', {tx_id: p.spend.id}); reload(); }, 'ghost')));
+  return el('details', {className: 'card'},
+    el('summary', {textContent: `Reimbursements left out of the totals (${pairs.count} pairs, ${eur(pairs.spent)})`}),
+    note('A payment and a receipt of the same amount (within 1%, up to 60 days apart) cancel out. If one is wrong, tap "Not a pair".'),
+    ...items);
 }
 
 function rulesCard(rules, reload) {
@@ -78,22 +118,8 @@ function rulesCard(rules, reload) {
     button('✕', async () => { await post('/api/rules/delete', {pattern: r.pattern}); reload(); }, 'ghost'))));
 }
 
-function genericCard(generic, reload) {
-  const items = generic.entries.map(e => {
-    const chips = el('div', {className: 'chips'}, ...QUICK.map(c => button(c, async () => {
-      await post('/api/categorize', {tx_id: e.id, category: c});
-      reload();
-    }, 'chip')));
-    return el('div', {className: 'review'},
-      row(`${e.date} · ${e.description.slice(0, 28)}`, eur2(e.amount), 'neg'), chips);
-  });
-  return card(`No shop name (${generic.total} entries)`,
-    note('The bank gives no merchant for these (e.g. contactless), so a rule would label them all the same. They are asked one by one, biggest first.'),
-    ...items, generic.total > items.length ? note(`${generic.total - items.length} more after these.`) : null);
-}
-
 function categoriesCard(cats, reload) {
-  const from = el('select', {}, ...cats.map(c => el('option', {value: c, textContent: c})));
+  const from = el('select', {className: 'picker'}, ...cats.map(c => el('option', {value: c, textContent: c})));
   const to = categoryInput(cats);
   const go = button('Merge / rename', async () => {
     const dst = to.input.value.trim();

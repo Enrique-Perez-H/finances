@@ -284,14 +284,15 @@ def categorize_all(db: Database) -> int:
             db.conn.execute("UPDATE transactions SET category=?, cat_source=? WHERE id=?",
                             (category, source, r["id"]))
             changed += 1
-    return changed
+    from . import pairs  # after classification: pairing looks at the final categories
+    return changed + pairs.apply(db)
 
 
 def review_queue(db: Database, limit: int = 30) -> list[dict]:
     """Uncategorized entries grouped by merchant, biggest first, for you to decide."""
     groups = defaultdict(lambda: {"count": 0, "total": 0.0, "sample": "", "last": ""})
     for r in db.conn.execute(
-            "SELECT description, amount, date FROM transactions WHERE category=? ORDER BY date",
+            "SELECT description, amount, date FROM transactions WHERE category=? AND paired_with='' ORDER BY date",
             (UNCATEGORIZED,)):
         g = groups[merchant_key(r["description"]) or normalize(r["description"])]
         g["count"] += 1
@@ -308,7 +309,7 @@ def review_queue(db: Database, limit: int = 30) -> list[dict]:
 def generic_entries(db: Database, limit: int = 15) -> dict:
     """Uncategorized entries that name no merchant (e.g. 'contactless'): one by one."""
     rows = [r for r in db.conn.execute(
-        "SELECT id, date, amount, description FROM transactions WHERE category=?"
+        "SELECT id, date, amount, description FROM transactions WHERE category=? AND paired_with=''"
         " ORDER BY ABS(amount) DESC", (UNCATEGORIZED,))
         if is_generic(merchant_key(r["description"]) or normalize(r["description"]))]
     return dict(total=len(rows), entries=[dict(r) for r in rows[:limit]])

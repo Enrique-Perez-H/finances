@@ -46,3 +46,8 @@ label.muted{display:flex;align-items:center;gap:8px;margin:8px 0}
 .ranges button{background:var(--bg);color:var(--muted);border:1px solid var(--muted);padding:5px 12px;font-size:.85rem}
 .ranges button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .warn{width:100%;color:var(--muted);font-size:.8rem}
+
+.picker{width:100%;margin:4px 0}
+details.group{border-top:1px solid color-mix(in srgb,var(--muted) 30%,transparent);padding:8px 0}
+details.group summary{cursor:pointer;display:flex;justify-content:space-between;gap:10px}
+.pair{border-top:1px solid color-mix(in srgb,var(--muted) 30%,transparent);padding:8px 0}

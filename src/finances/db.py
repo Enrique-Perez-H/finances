@@ -78,6 +78,10 @@ class Database:
 
     def _migrate(self) -> None:
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(transactions)")}
+        if "paired_with" not in cols:  # id of the matching spend/reimbursement, '' if none
+            self.conn.execute("ALTER TABLE transactions ADD COLUMN paired_with TEXT NOT NULL DEFAULT ''")
+        if "pair_blocked" not in cols:  # 1 = you said this is not a reimbursement pair
+            self.conn.execute("ALTER TABLE transactions ADD COLUMN pair_blocked INTEGER NOT NULL DEFAULT 0")
         if "mcc" not in cols:  # merchant category code from the card network, when the bank gives one
             self.conn.execute("ALTER TABLE transactions ADD COLUMN mcc TEXT NOT NULL DEFAULT ''")
         if "cat_source" not in cols:  # '' auto/unset, 'default', 'user' (rule), 'manual' (one entry)

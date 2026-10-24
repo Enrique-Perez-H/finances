@@ -35,7 +35,7 @@ python -m unittest discover -s tests
 | Forecast | Projects income, spending and wealth from your history plus assumptions you set |
 | Fund | Calculator for a savings fund (e.g. for a child): contributions, interest, tax, target, optionally starting from a real account balance |
 
-Everything is computed locally. Internal transfers between your own accounts are excluded from spending and income.
+Everything is computed locally. Internal transfers between your own accounts are excluded from spending and income, and so are reimbursement pairs: a payment and a receipt of the same amount (within 1%, up to 60 days apart) cancel out. Every pair is listed in the Spending tab, with a button to reject a wrong match.
 
 ## Status
 

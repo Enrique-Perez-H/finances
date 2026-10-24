@@ -142,3 +142,19 @@ export function categoryInput(categories, value = '') {
   const list = el('datalist', {id}, ...categories.map(c => el('option', {value: c})));
   return {input, wrap: el('span', {}, input, list)};
 }
+
+// Dropdown of categories. Choosing one calls onChoose(name) straight away; the last option
+// asks for a new name. `current` is shown as selected when given.
+export function categoryPicker(categories, onChoose, {current = '', placeholder = 'Choose a category…'} = {}) {
+  const sel = el('select', {className: 'picker'},
+    el('option', {value: '', textContent: current || placeholder, selected: true, disabled: !current}),
+    ...categories.filter(c => c !== current).map(c => el('option', {value: c, textContent: c})),
+    el('option', {value: '__new__', textContent: '＋ New category…'}));
+  sel.addEventListener('change', () => {
+    let value = sel.value;
+    sel.selectedIndex = 0;
+    if (value === '__new__') value = (prompt('Name of the new category') || '').trim();
+    if (value) onChoose(value);
+  });
+  return sel;
+}

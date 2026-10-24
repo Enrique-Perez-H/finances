@@ -11,7 +11,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis, categorize, config, forecast, fund, history, income, recurring
+from . import analysis, categorize, config, forecast, fund, history, income, pairs, recurring
 from .db import Database
 from .sync import run_sync
 
@@ -64,6 +64,7 @@ GET_ROUTES = {
         include_other_income=_q(q, "other_income", "1") != "0"),
     "/api/funds": lambda db, q: fund.list_plans(db),
     "/api/evolution": lambda db, q: history.evolution(db, int(_num(q, "months", 24))),
+    "/api/pairs": lambda db, q: pairs.listing(db),
     "/api/review": lambda db, q: categorize.review_queue(db),
     "/api/review/generic": lambda db, q: categorize.generic_entries(db),
     "/api/categories": lambda db, q: categorize.all_categories(db),
@@ -87,6 +88,12 @@ def _post_merge_category(db, body):
     moved = categorize.merge_category(db, str(body.get("src", "")), str(body.get("dst", "")))
     db.save()
     return {"moved": moved}
+
+
+def _post_block_pair(db, body):
+    pairs.block(db, str(body.get("tx_id", "")))
+    db.save()
+    return {"ok": True}
 
 
 def _post_delete_rule(db, body):
@@ -121,6 +128,7 @@ POST_ROUTES = {
     "/api/funds/preview": lambda db, body: fund.preview(db, body),
     "/api/categorize": _post_categorize,
     "/api/rules/delete": _post_delete_rule,
+    "/api/pairs/block": _post_block_pair,
     "/api/categories/merge": _post_merge_category,
 }
 

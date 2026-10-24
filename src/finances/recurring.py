@@ -39,7 +39,7 @@ def detect(db: Database, today: date | None = None) -> list[dict]:
     groups = defaultdict(list)
     for r in db.conn.execute(
             "SELECT date, amount, description, category FROM transactions"
-            " WHERE category != ? AND amount != 0 ORDER BY date", (INTERNAL,)):
+            " WHERE category != ? AND amount != 0 AND paired_with = '' ORDER BY date", (INTERNAL,)):
         key = merchant_key(r["description"]) or normalize(r["description"])
         groups[(r["amount"] > 0, key)].append(r)
 

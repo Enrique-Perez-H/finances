@@ -11,7 +11,7 @@ def summary(db: Database, months: int = 12, today: date | None = None) -> dict:
     current = (today or date.today()).isoformat()[:7]
     rows = db.conn.execute(
         "SELECT date, amount, description, category FROM transactions"
-        " WHERE amount > 0 AND category != ? ORDER BY date", (INTERNAL,)).fetchall()
+        " WHERE amount > 0 AND category != ? AND paired_with = '' ORDER BY date", (INTERNAL,)).fetchall()
     all_months = sorted({r["date"][:7] for r in rows if r["date"][:7] < current})[-months:]
     rows = [r for r in rows if r["date"][:7] in all_months]
 
