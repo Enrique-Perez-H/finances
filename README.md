@@ -29,6 +29,7 @@ python -m unittest discover -s tests
 |---|---|
 | Overview | Net worth, accounts, monthly cash flow, investments |
 | Spending | Spending per category per month. Entries it cannot classify are put to you in a review queue; each answer becomes a rule applied to past and future entries. You can also fix single entries. |
+| Evolution | Total per type (cash, savings, investments) over time, interest and dividends received per month, and a way to choose how each account counts |
 | Income | What you receive: salary, transfers, interest, by type, source and month |
 | Recurring | Detected recurring costs and income, monthly and yearly totals, what is coming up |
 | Forecast | Projects income, spending and wealth from your history plus assumptions you set |
@@ -48,4 +49,5 @@ Everything is computed locally. Internal transfers between your own accounts are
 | Revolut | not planned for now |
 | 2FA code prompt in the UI (`NeedsInput`) | done |
 | Spending categories, review queue, income, recurring, forecast, fund tabs | done (v0.2 to v0.5) |
+| Trade Republic history import (interest, deposits, card payments) | done, untested against a real account |
 | Compare fund plan against real contributions | idea |

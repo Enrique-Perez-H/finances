@@ -19,6 +19,10 @@ from decimal import Decimal
 
 from .base import Connector, NeedsInput, Snapshot
 
+from datetime import datetime, timedelta, timezone
+
+from ..categorize import INTERNAL
+
 PROVIDER = "trade_republic"
 CASH_ID = "tr-cash"
 PORTFOLIO_ID = "tr-portfolio"
@@ -43,6 +47,77 @@ def _load_pytr():
         raise RuntimeError(
             "pytr is not installed (see docs/TERMUX.md, section Trade Republic)") from e
     return TradeRepublicApi, Portfolio
+
+
+TIMELINE_PAGES_FIRST, TIMELINE_PAGES_LATER = 40, 4
+TIMELINE_DAYS_LATER = 60
+
+# Event types whose meaning does not depend on the shop: their category is set here.
+_INTEREST = {"INTEREST_PAYOUT", "INTEREST_PAYOUT_CREATED"}
+_DIVIDEND = {"CREDIT", "SSP_CORPORATE_ACTION_CASH", "SSP_CORPORATE_ACTION_INVOICE_CASH"}
+_MOVES = {  # money moving to/from your bank, or between cash and investments
+    "ACCOUNT_TRANSFER_INCOMING", "BANK_TRANSACTION_INCOMING", "BANK_TRANSACTION_OUTGOING",
+    "INCOMING_TRANSFER", "INCOMING_TRANSFER_DELEGATION", "OUTGOING_TRANSFER",
+    "OUTGOING_TRANSFER_DELEGATION", "PAYMENT_INBOUND", "PAYMENT_INBOUND_APPLE_PAY",
+    "PAYMENT_INBOUND_CREDIT_CARD", "PAYMENT_INBOUND_GOOGLE_PAY", "PAYMENT_INBOUND_SEPA_DIRECT_DEBIT",
+    "PAYMENT-SERVICE-IN-PAYMENT-DIRECT-DEBIT", "PAYMENT_OUTBOUND", "JUNIOR_P2P_TRANSFER",
+    "ORDER_EXECUTED", "SAVINGS_PLAN_EXECUTED", "SAVINGS_PLAN_INVOICE_CREATED", "TRADE_INVOICE",
+    "TRADING_TRADE_EXECUTED", "TRADING_SAVINGSPLAN_EXECUTED", "IPO_TRADE_EXECUTED",
+    "TRADE_CORRECTED", "SPARE_CHANGE_AGGREGATE", "BENEFITS_SPARE_CHANGE_EXECUTION",
+    "SAVEBACK_AGGREGATE", "BENEFITS_SAVEBACK_EXECUTION", "ACQUISITION_TRADE_PERK",
+    "PRIVATE_MARKET_FUND_TRADE_EXECUTED", "PRIVATE_MARKETS_TRADE_EXECUTED",
+}
+_TAX = {"SSP_TAX_CORRECTION", "SSP_TAX_CORRECTION_INVOICE", "TAX_CORRECTION", "TAX_REFUND"}
+_ATM = {"CARD_SUCCESSFUL_ATM_WITHDRAWAL"}
+
+
+def map_timeline_item(item: dict) -> dict | None:
+    """One Trade Republic timeline entry -> one transaction on the cash account, or None."""
+    if str(item.get("status", "")).lower() == "canceled":
+        return None
+    try:
+        amount = Decimal(str((item.get("amount") or {}).get("value")))
+    except Exception:
+        return None
+    if amount == 0 or not item.get("timestamp") or not item.get("id"):
+        return None
+    etype = str(item.get("eventType") or "").upper()
+    hint = None
+    if etype in _INTEREST or etype in _DIVIDEND:
+        hint = "Interest & dividends" if amount > 0 else None
+    elif etype in _MOVES:
+        hint = INTERNAL
+    elif etype in _TAX:
+        hint = "Refunds" if amount > 0 else "Taxes"
+    elif etype in _ATM:
+        hint = "Cash withdrawals"
+    text = " ".join(p for p in (item.get("title"), item.get("subtitle")) if p) or etype
+    tx = dict(id=f"tr-{item['id']}", account_id=CASH_ID, date=str(item["timestamp"])[:10],
+              amount=float(amount), description=text[:140], category="uncategorized")
+    if hint:
+        tx.update(category=hint, cat_source="connector")
+    return tx
+
+
+async def fetch_timeline(tr, since: str, max_pages: int) -> list[dict]:
+    """Page through the timeline until entries get older than `since` (ISO date)."""
+    out, after = [], None
+    for _ in range(max_pages):
+        sub = await tr.timeline_transactions(after)
+        _, _, response = await tr.recv()
+        await tr.unsubscribe(sub)
+        reached_old = False
+        for item in response.get("items", []):
+            if str(item.get("timestamp", ""))[:10] < since:
+                reached_old = True
+                continue
+            tx = map_timeline_item(item)
+            if tx:
+                out.append(tx)
+        after = (response.get("cursors") or {}).get("after")
+        if not after or reached_old:
+            break
+    return out
 
 
 def dump_cookies(jar) -> list[dict]:
@@ -129,6 +204,26 @@ class TradeRepublicConnector(Connector):
         tr = self.tr
         self.tr = None  # next sync starts from the saved session
         pf = Portfolio(tr)
-        asyncio.run(pf.portfolio_loop())
+        first = not self.secrets.get("tr_history_done")
+        since = "1970-01-01" if first else (
+            datetime.now(timezone.utc) - timedelta(days=TIMELINE_DAYS_LATER)).date().isoformat()
+        pages = TIMELINE_PAGES_FIRST if first else TIMELINE_PAGES_LATER
+        result = {}
+
+        async def run():
+            try:  # history is a bonus: a failure here must not lose balances and holdings
+                result["tx"] = await fetch_timeline(tr, since, pages)
+            except Exception as e:
+                result["error"] = type(e).__name__
+            await pf.portfolio_loop()
+
+        asyncio.run(run())
         now = self._now or datetime.now(timezone.utc).isoformat(timespec="seconds")
-        return build_snapshot(pf.positions, pf.cash, now)
+        snap = build_snapshot(pf.positions, pf.cash, now)
+        snap.transactions = result.get("tx", [])
+        if "error" in result:
+            snap.notes.append(f"Trade Republic history could not be read ({result['error']}); "
+                              "balances are fine.")
+        else:
+            self.secrets["tr_history_done"] = True
+        return snap

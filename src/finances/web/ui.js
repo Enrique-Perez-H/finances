@@ -45,16 +45,27 @@ const svgEl = (tag, attrs) => {
 // Lines: series = [{label, values, cls}], x labels shown at both ends.
 export function lineChart(series, labels = []) {
   const W = 320, H = 120, pad = 4;
-  const all = series.flatMap(s => s.values);
+  const all = series.flatMap(s => s.values).filter(v => v !== null);
   const max = Math.max(...all, 0), min = Math.min(...all, 0);
   const n = Math.max(...series.map(s => s.values.length));
   const x = i => pad + (i / Math.max(n - 1, 1)) * (W - 2 * pad);
   const y = v => H - pad - ((v - min) / ((max - min) || 1)) * (H - 2 * pad);
   const svg = svgEl('svg', {viewBox: `0 0 ${W} ${H + 14}`, role: 'img'});
   if (min < 0) svg.append(svgEl('line', {x1: 0, x2: W, y1: y(0), y2: y(0), class: 'axis'}));
-  series.forEach((s, k) => svg.append(svgEl('polyline', {
-    points: s.values.map((v, i) => `${x(i)},${y(v)}`).join(' '),
-    class: `line s${k}`, fill: 'none'})));
+  // null values (unknown months) break the line instead of being drawn as zero
+  series.forEach((s, k) => {
+    let run = [];
+    const flush = () => {
+      if (run.length > 1) svg.append(svgEl('polyline', {points: run.join(' '), class: `line s${k}`, fill: 'none'}));
+      else if (run.length === 1) {
+        const [cx, cy] = run[0].split(',');
+        svg.append(svgEl('circle', {cx, cy, r: 2.5, class: `dot s${k}`}));
+      }
+      run = [];
+    };
+    s.values.forEach((v, i) => (v === null ? flush() : run.push(`${x(i)},${y(v)}`)));
+    flush();
+  });
   if (labels.length) {
     [[0, labels[0], 'start'], [n - 1, labels[labels.length - 1], 'end']].forEach(([i, text, anchor]) => {
       const t = svgEl('text', {x: x(i), y: H + 11, 'text-anchor': anchor, class: 'tick'});

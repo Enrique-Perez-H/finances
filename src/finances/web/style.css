@@ -34,3 +34,4 @@ input.wide{width:100%;margin:2px 0 6px}
 label.muted{display:flex;align-items:center;gap:8px;margin:8px 0}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
 .chip{background:var(--bg);color:var(--fg);border:1px solid var(--muted);padding:6px 10px;font-size:.85rem}
+.dot{stroke:none}.s0.dot{fill:var(--accent)}.s1.dot{fill:var(--good)}.s2.dot{fill:var(--fg)}.s3{stroke:var(--bad);background:var(--bad)}.s3.dot{fill:var(--bad)}

@@ -23,6 +23,16 @@ CREATE TABLE IF NOT EXISTS transactions (
     category TEXT NOT NULL DEFAULT 'uncategorized'
 );
 CREATE INDEX IF NOT EXISTS tx_date ON transactions(date);
+CREATE TABLE IF NOT EXISTS balance_history (
+    day TEXT NOT NULL,             -- ISO date of the sync that recorded it
+    account_id TEXT NOT NULL,
+    balance REAL NOT NULL,
+    PRIMARY KEY (day, account_id)
+);
+CREATE TABLE IF NOT EXISTS account_settings (
+    id TEXT PRIMARY KEY,           -- account id
+    kind TEXT NOT NULL             -- your choice of type; survives later syncs
+);
 CREATE TABLE IF NOT EXISTS rules (
     pattern TEXT PRIMARY KEY,      -- normalized words, matched against transaction text
     category TEXT NOT NULL
@@ -82,16 +92,17 @@ class Database:
             "INSERT INTO accounts(id,provider,name,kind,currency,balance,updated_at)"
             " VALUES(:id,:provider,:name,:kind,:currency,:balance,:updated_at)"
             " ON CONFLICT(id) DO UPDATE SET name=:name, balance=:balance,"
-            " updated_at=:updated_at, currency=:currency, kind=:kind",
+            " updated_at=:updated_at, currency=:currency,"
+            " kind=COALESCE((SELECT kind FROM account_settings WHERE id=:id), :kind)",
             a,
         )
 
     def upsert_transaction(self, t: dict) -> None:
         self.conn.execute(
-            "INSERT INTO transactions(id,account_id,date,amount,description,category,mcc)"
-            " VALUES(:id,:account_id,:date,:amount,:description,:category,:mcc)"
+            "INSERT INTO transactions(id,account_id,date,amount,description,category,mcc,cat_source)"
+            " VALUES(:id,:account_id,:date,:amount,:description,:category,:mcc,:cat_source)"
             " ON CONFLICT(id) DO UPDATE SET amount=:amount, description=:description, mcc=:mcc",
-            {"mcc": "", **t},
+            {"mcc": "", "cat_source": "", **t},
         )
 
     def replace_holdings(self, account_id: str, holdings: list[dict]) -> None:

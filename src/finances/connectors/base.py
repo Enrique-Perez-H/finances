@@ -34,6 +34,7 @@ class Snapshot:
     accounts: list[dict] = field(default_factory=list)
     transactions: list[dict] = field(default_factory=list)
     holdings: dict[str, list[dict]] = field(default_factory=dict)  # account_id -> rows
+    notes: list[str] = field(default_factory=list)  # non-fatal problems to show the user
 
 
 class Connector:

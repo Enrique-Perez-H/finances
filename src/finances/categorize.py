@@ -214,12 +214,12 @@ def classify(text: str, amount: float, user_rules: list[tuple[str, str]], mcc: s
 
 
 def categorize_all(db: Database) -> int:
-    """(Re)classify every entry not set by hand. Returns how many changed."""
+    """(Re)classify every entry not set by hand or by its connector. Returns how many changed."""
     user_rules = [(r["pattern"], r["category"]) for r in db.conn.execute("SELECT * FROM rules")]
     changed = 0
     rows = db.conn.execute(
         "SELECT id, description, amount, category, cat_source, mcc FROM transactions"
-        " WHERE cat_source != 'manual'").fetchall()
+        " WHERE cat_source NOT IN ('manual', 'connector')").fetchall()
     for r in rows:
         category, source = classify(r["description"], r["amount"], user_rules, r["mcc"])
         if (category, source) != (r["category"], r["cat_source"]):

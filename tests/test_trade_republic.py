@@ -121,6 +121,42 @@ class FlowTests(IsolatedHome):
         c.fetch()
         self.assertEqual(FakeApi.log, ["initiate", "complete:None"])
 
+    def test_history_imported_and_marked_done(self):
+        class TimelineApi(FakeApi):
+            async def timeline_transactions(self, after=None):
+                return "s"
+
+            async def recv(self):
+                return "s", {}, {"items": [{"id": "e1", "timestamp": "2026-05-02T08:00:00.000+0000",
+                                            "title": "Zinsen", "subtitle": "", "eventType": "INTEREST_PAYOUT",
+                                            "amount": {"value": 9.5}}], "cursors": {}}
+
+            async def unsubscribe(self, sub):
+                pass
+
+        secrets = {"tr_phone": "+34600000000", "tr_pin": "1234"}
+        c = TradeRepublicConnector(secrets, TimelineApi, FakePortfolio, now="t")
+        from finances.connectors.base import NeedsInput
+        with self.assertRaises(NeedsInput):
+            c.fetch()
+        snap = c.fetch(user_input="1")
+        self.assertEqual([(t["amount"], t["category"]) for t in snap.transactions],
+                         [(9.5, "Interest & dividends")])
+        self.assertTrue(secrets["tr_history_done"])
+        self.assertEqual(snap.notes, [])
+
+    def test_history_failure_keeps_balances_and_says_so(self):
+        secrets = {"tr_phone": "+34600000000", "tr_pin": "1234"}
+        c = make(secrets)  # FakeApi has no timeline support: the call fails
+        from finances.connectors.base import NeedsInput
+        with self.assertRaises(NeedsInput):
+            c.fetch()
+        snap = c.fetch(user_input="1")
+        self.assertEqual(len(snap.accounts), 2)
+        self.assertEqual(snap.transactions, [])
+        self.assertIn("history could not be read", snap.notes[0])
+        self.assertNotIn("tr_history_done", secrets)
+
     def test_through_sync_layer_and_encrypted_persistence(self):
         saved = []
         REGISTRY["trade_republic"] = lambda secrets: make(secrets)

@@ -1,5 +1,6 @@
 import contextlib
 
+from . import history
 from .categorize import categorize_all
 from .connectors import REGISTRY
 from .connectors.base import ConnectorError, NeedsInput, Skipped
@@ -51,9 +52,12 @@ def run_sync(db: Database, secrets: dict, names: list[str], inputs: dict | None 
             for account_id, rows in snap.holdings.items():
                 db.replace_holdings(account_id, rows)
             categorize_all(db)
+            history.snapshot(db)
             db.save()
         status[name] = {"state": "ok", "accounts": len(snap.accounts),
                         "transactions": len(snap.transactions)}
+        if snap.notes:
+            status[name]["note"] = " ".join(snap.notes)
     if persist_secrets and repr(secrets) != before:
         persist_secrets(secrets)
     return status
