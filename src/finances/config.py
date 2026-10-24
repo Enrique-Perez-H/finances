@@ -22,7 +22,17 @@ def secrets_path() -> Path:
 
 
 def get_passphrase() -> str:
-    return os.environ.get("FINANCES_PASSPHRASE") or getpass.getpass("Vault passphrase: ")
+    env = os.environ.get("FINANCES_PASSPHRASE")
+    if env:
+        return env
+    if db_path().exists() or secrets_path().exists():
+        return getpass.getpass("Vault passphrase: ")
+    # New vault: ask twice, since a typo here would lock you out of your own data.
+    while True:
+        first = getpass.getpass("Choose a vault passphrase: ")
+        if first and first == getpass.getpass("Repeat passphrase: "):
+            return first
+        print("Passphrases did not match (or were empty), try again.")
 
 
 def load_secrets(passphrase: str) -> dict:

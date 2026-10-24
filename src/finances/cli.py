@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from . import config
+from . import config, vault
 from .db import Database
 from .server import serve
 from .sync import run_sync
@@ -23,6 +23,15 @@ def main(argv=None):
 
     if args.demo:
         os.environ.setdefault("FINANCES_HOME", os.path.expanduser("~/.finances-demo"))
+    try:
+        return _run(args)
+    except vault.WrongPassphrase:
+        print("Wrong passphrase. (If this is a throwaway demo vault you can delete it: "
+              f"rm -rf {config.home()})", file=sys.stderr)
+        return 1
+
+
+def _run(args):
     passphrase = config.get_passphrase()
     secrets = config.load_secrets(passphrase)
 
