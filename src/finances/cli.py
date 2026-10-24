@@ -5,7 +5,7 @@ import sys
 
 from . import config, vault
 from .db import Database
-from .server import serve
+from .server import local_ip, serve
 from .sync import run_sync
 
 
@@ -46,11 +46,12 @@ def _sync_interactive(db, secrets, sources, passphrase):
     """Run a sync, asking on the terminal whenever a connector needs a code."""
     import getpass
     save = lambda s: config.save_secrets(passphrase, s)  # noqa: E731
-    status = run_sync(db, secrets, sources, persist_secrets=save)
+    psu = {"Psu-Ip-Address": secrets.get("eb_psu_ip") or local_ip(), "Psu-User-Agent": "finances-cli"}
+    status = run_sync(db, secrets, sources, persist_secrets=save, psu=psu)
     for name, st in list(status.items()):
         while st["state"] == "needs_input" and st.get("field"):
             code = getpass.getpass(f"{name}: {st['prompt']}: ")
-            st = run_sync(db, secrets, [name], {name: code}, persist_secrets=save)[name]
+            st = run_sync(db, secrets, [name], {name: code}, persist_secrets=save, psu=psu)[name]
             status[name] = st
     return status
 

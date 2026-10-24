@@ -5,6 +5,7 @@ Bound to 127.0.0.1. To reach it from another device use a private network
 header and the Host header is checked, to block cross-site and DNS-rebinding abuse.
 """
 import json
+import socket
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,6 +19,18 @@ WEB = Path(__file__).parent / "web"
 TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
          ".json": "application/json", ".svg": "image/svg+xml"}
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
+
+
+def local_ip() -> str:
+    """This device's own network address (no packet is sent)."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("10.255.255.255", 1))
+        return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        sock.close()
 
 
 class BadRequest(Exception):
@@ -134,6 +147,17 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                 raise BadRequest("JSON object expected")
             return body
 
+        def _psu(self) -> dict:
+            """Who is present: the person who tapped Sync, described from their own request."""
+            ip = self.client_address[0]
+            if ip in ("127.0.0.1", "::1"):
+                ip = secrets.get("eb_psu_ip") or local_ip()
+            h = self.headers
+            pairs = {"Psu-Ip-Address": ip, "Psu-User-Agent": h.get("User-Agent"),
+                     "Psu-Accept": h.get("Accept"), "Psu-Accept-Language": h.get("Accept-Language"),
+                     "Psu-Accept-Encoding": h.get("Accept-Encoding"), "Psu-Referer": h.get("Referer")}
+            return {k: v for k, v in pairs.items() if v}
+
         def do_GET(self):
             if not self._host_ok():
                 return self._json(403, {"error": "forbidden host"})
@@ -163,7 +187,8 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                     with sync_lock:
                         status = run_sync(
                             db, secrets, secrets.get("sources", []), inputs, lock=lock,
-                            persist_secrets=lambda s: config.save_secrets(db.passphrase, s))
+                            persist_secrets=lambda s: config.save_secrets(db.passphrase, s),
+                            psu=self._psu())
                     return self._json(200, status)
                 route = POST_ROUTES.get(path)
                 if not route:

@@ -21,11 +21,15 @@ class FakeBank:
         self.calls = []
         self.dead = False
 
-    def __call__(self, method, path, body=None, params=None):
+    required = []
+
+    def __call__(self, method, path, body=None, params=None, headers=None):
         self.calls.append((method, path, body, params))
+        self.header_log = getattr(self, "header_log", []) + [(path, headers)]
         if path == "/aspsps":
             return {"aspsps": [{"name": "Santander", "country": "ES",
-                                "maximum_consent_validity": 90 * 86400},
+                                "maximum_consent_validity": 90 * 86400,
+                                "required_psu_headers": self.required},
                                {"name": "Santander Consumer", "country": "ES"}]}
         if path == "/auth":
             return {"url": "https://bank.example/approve"}
@@ -148,13 +152,14 @@ class ConnectorTests(unittest.TestCase):
         self.assertTrue(secrets["eb_session"]["initial_done"])
         # second sync: no approval needed, shorter history window
         calls_before = len(c._http.calls)
+        secrets["eb_last_fetch"] = (NOW - timedelta(days=2)).isoformat()  # past the cool-down
         c.fetch()
         tx_call = [x for x in c._http.calls[calls_before:] if x[1].endswith("/transactions")][0]
         self.assertEqual(tx_call[3]["date_from"], (NOW - timedelta(days=60)).date().isoformat())
 
     def test_api_error_message_reaches_the_ui(self):
         from finances import sync
-        def failing(method, path, body=None, params=None):
+        def failing(method, path, body=None, params=None, headers=None):
             raise EnableBankingError(401, "Invalid JWT")
         c, secrets = make()
         c._http = failing
@@ -189,6 +194,75 @@ class ConnectorTests(unittest.TestCase):
         self.assertNotIn("Mercadona", json.dumps(report))
         self.assertNotIn("20.00", json.dumps(report))
 
+    PSU = {"Psu-Ip-Address": "192.0.2.7", "Psu-User-Agent": "Browser/1"}
+
+    def connected(self, required, psu=True, bank=None):
+        bank = bank or FakeBank()
+        bank.required = required
+        c, secrets = make(bank=bank)
+        with self.assertRaises(NeedsInput):
+            c.fetch()
+        c.fetch(user_input="C1")
+        c.set_psu(self.PSU if psu else None)
+        return c, secrets, bank
+
+    def data_headers(self, bank):
+        return [h for path, h in bank.header_log if path.startswith("/accounts/")]
+
+    def test_psu_headers_sent_when_required_and_present(self):
+        c, secrets, bank = self.connected(["Psu-Ip-Address", "Psu-User-Agent"])
+        bank.header_log = []
+        secrets["eb_last_fetch"] = (NOW - timedelta(hours=1)).isoformat()
+        c.fetch()
+        self.assertTrue(self.data_headers(bank))
+        for h in self.data_headers(bank):
+            self.assertEqual(h, self.PSU)
+
+    def test_all_or_none_and_never_invented(self):
+        c, secrets, bank = self.connected(["Psu-Ip-Address", "Psu-Geo-Location"])  # geo unavailable
+        bank.header_log = []
+        secrets["eb_last_fetch"] = (NOW - timedelta(days=2)).isoformat()
+        c.fetch()
+        self.assertTrue(all(h == {} for h in self.data_headers(bank)))
+
+    def test_no_headers_without_a_present_user(self):
+        c, secrets, bank = self.connected(["Psu-Ip-Address"], psu=False)
+        bank.header_log = []
+        secrets["eb_last_fetch"] = (NOW - timedelta(days=2)).isoformat()
+        c.fetch()
+        self.assertTrue(all(h == {} for h in self.data_headers(bank)))
+
+    def test_unattended_syncs_are_spaced_out(self):
+        from finances.connectors.base import Skipped
+        c, secrets, bank = self.connected([], psu=False)
+        with self.assertRaises(Skipped) as ctx:
+            c.fetch()  # just fetched when connecting
+        self.assertIn("min", str(ctx.exception))
+        secrets["eb_last_fetch"] = (NOW - timedelta(hours=25)).isoformat()
+        c.fetch()  # one account => 2 calls per sync => allowed again well within a day
+
+    def test_attended_syncs_only_wait_minutes(self):
+        from finances.connectors.base import Skipped
+        c, secrets, bank = self.connected(["Psu-Ip-Address"])
+        secrets["eb_last_fetch"] = (NOW - timedelta(minutes=3)).isoformat()
+        with self.assertRaises(Skipped):
+            c.fetch()
+        secrets["eb_last_fetch"] = (NOW - timedelta(minutes=11)).isoformat()
+        c.fetch()
+
+    def test_rate_limit_gets_a_clear_message_and_cooldown(self):
+        from finances.connectors.base import ConnectorError
+        c, secrets, bank = self.connected(["Psu-Ip-Address"])
+        secrets["eb_last_fetch"] = (NOW - timedelta(days=2)).isoformat()
+        def limited(method, path, body=None, params=None, headers=None):
+            raise EnableBankingError(429, "[HUB046] Allowed number of accesses exceeded for consent.")
+        c._http = limited
+        with self.assertRaises(ConnectorError) as ctx:
+            c.fetch()
+        self.assertIn("24 hours", str(ctx.exception))
+        self.assertIn("eb_session", secrets)  # a rate limit does not discard the consent
+        self.assertEqual(secrets["eb_last_fetch"], NOW.isoformat())
+
     def test_expired_session_asks_again(self):
         c, secrets = make()
         secrets["eb_session"] = {"session_id": "old", "accounts": [], "initial_done": True,
@@ -203,6 +277,7 @@ class ConnectorTests(unittest.TestCase):
             c.fetch()
         c.fetch(user_input="C1")
         bank.dead = True
+        secrets["eb_last_fetch"] = (NOW - timedelta(days=2)).isoformat()
         with self.assertRaises(NeedsInput):
             c.fetch()
         self.assertNotIn("eb_session", secrets)

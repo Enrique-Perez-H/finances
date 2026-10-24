@@ -54,7 +54,7 @@ async function sync(inputs = {}) {
       } else if (v.state === 'needs_input') {
         parts.push(el('div', {textContent: `${name}: ${v.prompt}`}));
       } else {
-        parts.push(el('div', {textContent: `${name}: ${v.state}${v.error ? ' – ' + v.error : ''}`}));
+        parts.push(el('div', {textContent: `${name}: ${v.state}${v.error ? ' – ' + v.error : ''}${v.note ? ' – ' + v.note : ''}`}));
       }
     }
     status.replaceChildren(...parts);

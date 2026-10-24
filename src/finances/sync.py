@@ -2,7 +2,7 @@ import contextlib
 
 from .categorize import categorize_all
 from .connectors import REGISTRY
-from .connectors.base import ConnectorError, NeedsInput
+from .connectors.base import ConnectorError, NeedsInput, Skipped
 from .db import Database
 
 # Connectors that raised NeedsInput stay alive here so the next call can continue
@@ -11,7 +11,7 @@ _pending: dict = {}
 
 
 def run_sync(db: Database, secrets: dict, names: list[str], inputs: dict | None = None,
-             lock=None, persist_secrets=None) -> dict:
+             lock=None, persist_secrets=None, psu: dict | None = None) -> dict:
     """Run the named connectors and return per-connector status for the UI.
 
     `lock` guards only the database writes, so slow network calls (a login waiting
@@ -24,12 +24,16 @@ def run_sync(db: Database, secrets: dict, names: list[str], inputs: dict | None 
     status = {}
     for name in names:
         connector = _pending.pop(name, None) or REGISTRY[name](secrets)
+        connector.set_psu(psu)
         try:
             snap = connector.fetch(user_input=inputs.get(name))
         except NeedsInput as e:
             _pending[name] = connector
             status[name] = {"state": "needs_input", "prompt": e.prompt, "url": e.url,
                             "field": e.field}
+            continue
+        except Skipped as e:
+            status[name] = {"state": "skipped", "note": str(e)}
             continue
         except NotImplementedError as e:
             status[name] = {"state": "unavailable", "error": str(e)}

@@ -21,6 +21,10 @@ class NeedsInput(Exception):
         self.field = field  # e.g. "code" -> the UI shows a text box
 
 
+class Skipped(Exception):
+    """Nothing to do right now (e.g. synced a moment ago); the message says when to retry."""
+
+
 class ConnectorError(Exception):
     """An error whose message is safe to show in the UI (no secrets, no raw responses)."""
 
@@ -39,6 +43,10 @@ class Connector:
         # Mutable on purpose: connectors may store session tokens here. The sync
         # layer persists the dict (encrypted) after each run.
         self.secrets = secrets
+        self.psu: dict | None = None  # details of the person who tapped Sync, when there is one
+
+    def set_psu(self, psu: dict | None) -> None:
+        self.psu = psu
 
     def fetch(self, user_input: str | None = None) -> Snapshot:
         raise NotImplementedError

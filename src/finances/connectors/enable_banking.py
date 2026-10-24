@@ -30,12 +30,16 @@ from decimal import Decimal
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
-from .base import Connector, ConnectorError, NeedsInput, Snapshot
+from .base import Connector, ConnectorError, NeedsInput, Skipped, Snapshot
 
 API = "https://api.enablebanking.com"
 DEFAULT_REDIRECT = "http://localhost:8765/callback"
 MAX_CONSENT = timedelta(days=180)
 FIRST_SYNC_DAYS, LATER_SYNC_DAYS = 730, 60
+# Banks may cap background (PSU-absent) access at ~4 requests per 24 h (PSD2). A request that
+# carries the PSU headers says "the user is present", which banks do not cap this way.
+UNATTENDED_DAILY_BUDGET = 4
+ATTENDED_MIN_INTERVAL = timedelta(minutes=10)
 BALANCE_PREFERENCE = ["CLBD", "ITBD", "OPBD", "CLAV", "ITAV", "XPCD"]
 
 
@@ -114,12 +118,13 @@ class EnableBankingConnector(Connector):
         self._state = None
 
     # --- HTTP -------------------------------------------------------------
-    def _urllib_http(self, method, path, body=None, params=None):
+    def _urllib_http(self, method, path, body=None, params=None, headers=None):
         url = API + path + ("?" + urllib.parse.urlencode(params) if params else "")
         token = make_jwt(self.secrets["eb_app_id"], self.secrets["eb_private_key"], self._now())
         req = urllib.request.Request(
             url, method=method, data=json.dumps(body).encode() if body is not None else None,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                     **(headers or {})})
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read() or b"{}")
@@ -161,6 +166,7 @@ class EnableBankingConnector(Connector):
             "psu_type": "personal",
         })
         self._bank_name = bank["name"]
+        self._required_headers = bank.get("required_psu_headers") or []
         raise NeedsInput(f"Approve access in {bank['name']}, then return here", url=resp["url"],
                          field="code")
 
@@ -182,25 +188,68 @@ class EnableBankingConnector(Connector):
         valid_until = resp.get("access", {}).get("valid_until") or \
             (self._now() + MAX_CONSENT).isoformat()
         self.secrets["eb_session"] = {"session_id": resp["session_id"], "accounts": accounts,
-                                      "valid_until": valid_until, "initial_done": False}
+                                      "valid_until": valid_until, "initial_done": False,
+                                      "psu_headers": getattr(self, "_required_headers", None)}
         self._state = None
 
+    # --- "user is present" headers and request budget --------------------
+    def _required_psu_headers(self, session: dict) -> list[str]:
+        if session.get("psu_headers") is None:  # session created before this was recorded
+            try:
+                session["psu_headers"] = self._find_bank().get("required_psu_headers") or []
+            except Exception:
+                return []
+        return session["psu_headers"]
+
+    def _psu_headers(self, session: dict) -> dict:
+        """All the headers the bank requires, filled from the real request, or none at all."""
+        if not self.psu:
+            return {}  # nobody is present (not a user-triggered sync): send nothing
+        required = self._required_psu_headers(session)
+        if not required:
+            return {}
+        available = {k.lower(): v for k, v in self.psu.items() if v}
+        headers = {}
+        for name in required:
+            if name.lower() not in available:
+                return {}  # the API wants all or none; do not invent values
+            headers[name] = available[name.lower()]
+        return headers
+
+    def _check_budget(self, session: dict, attended: bool) -> None:
+        last = self.secrets.get("eb_last_fetch")
+        if not last:
+            return
+        calls = 2 * max(len(session["accounts"]), 1)
+        if attended:
+            wait = ATTENDED_MIN_INTERVAL
+        else:
+            hours = float(self.secrets.get("eb_min_interval_hours") or
+                          min(24, max(1, 24 * calls / UNATTENDED_DAILY_BUDGET)))
+            wait = timedelta(hours=hours)
+        due = _parse_time(last) + wait
+        if self._now() < due:
+            minutes = int((due - self._now()).total_seconds() // 60) + 1
+            raise Skipped(f"Santander data was fetched recently; the bank limits how often an app "
+                          f"may read it. Next sync possible in about {minutes} min.")
+
     # --- data -------------------------------------------------------------
-    def _balance(self, uid: str) -> Decimal:
-        balances = self._http("GET", f"/accounts/{uid}/balances").get("balances", [])
+    def _balance(self, uid: str, headers: dict) -> Decimal:
+        balances = self._http("GET", f"/accounts/{uid}/balances", headers=headers).get("balances", [])
         if not balances:
             return Decimal(0)
         by_type = {b.get("balance_type"): b for b in balances}
         chosen = next((by_type[t] for t in BALANCE_PREFERENCE if t in by_type), balances[0])
         return Decimal(str(chosen["balance_amount"]["amount"]))
 
-    def _transactions(self, acct: dict, date_from: str) -> list[dict]:
+    def _transactions(self, acct: dict, date_from: str, headers: dict) -> list[dict]:
         out, seen, key = [], Counter(), None
         while True:
             params = {"date_from": date_from}
             if key:
                 params["continuation_key"] = key
-            page = self._http("GET", f"/accounts/{acct['uid']}/transactions", params=params)
+            page = self._http("GET", f"/accounts/{acct['uid']}/transactions", params=params,
+                              headers=headers)
             for tx in page.get("transactions", []):
                 mapped = map_transaction(tx, acct["id"], seen)
                 if mapped:
@@ -219,24 +268,33 @@ class EnableBankingConnector(Connector):
             self._start_authorization()  # raises NeedsInput
 
         session = self.secrets["eb_session"]
+        headers = self._psu_headers(session)
+        if not user_input:  # right after approving there is nothing recent to protect
+            self._check_budget(session, attended=bool(headers))
         days = LATER_SYNC_DAYS if session.get("initial_done") else FIRST_SYNC_DAYS
         date_from = (self._now() - timedelta(days=days)).date().isoformat()
         now = self._now().isoformat(timespec="seconds")
         snap = Snapshot()
         try:
             for acct in session["accounts"]:
-                balance = self._balance(acct["uid"])
+                balance = self._balance(acct["uid"], headers)
                 snap.accounts.append(dict(
                     id=acct["id"], provider=acct["provider"], name=acct["name"],
                     kind=acct["kind"], currency=acct["currency"], balance=float(balance),
                     updated_at=now))
-                snap.transactions += self._transactions(acct, date_from)
+                snap.transactions += self._transactions(acct, date_from, headers)
         except EnableBankingError as e:
+            if e.status == 429:
+                self.secrets["eb_last_fetch"] = self._now().isoformat()  # start the cool-down
+                raise ConnectorError(
+                    f"{e}. Banks may allow only ~4 background reads per day; wait up to 24 hours. "
+                    "Syncs are now spaced out to stay within that.") from None
             if e.status in (403, 404, 422):  # consent revoked or closed by the bank
                 self.secrets.pop("eb_session", None)
                 self._start_authorization()
             raise
         session["initial_done"] = True
+        self.secrets["eb_last_fetch"] = self._now().isoformat()
         return snap
 
     def field_report(self, days: int = 45) -> dict:
@@ -258,7 +316,8 @@ class EnableBankingConnector(Connector):
             key = None
             while True:
                 params = {"date_from": date_from, **({"continuation_key": key} if key else {})}
-                page = self._http("GET", f"/accounts/{acct['uid']}/transactions", params=params)
+                page = self._http("GET", f"/accounts/{acct['uid']}/transactions", params=params,
+                                  headers=self._psu_headers(session))
                 for tx in page.get("transactions", []):
                     total += 1
                     walk("", tx)
