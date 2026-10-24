@@ -152,6 +152,26 @@ class ConnectorTests(unittest.TestCase):
         tx_call = [x for x in c._http.calls[calls_before:] if x[1].endswith("/transactions")][0]
         self.assertEqual(tx_call[3]["date_from"], (NOW - timedelta(days=60)).date().isoformat())
 
+    def test_api_error_message_reaches_the_ui(self):
+        from finances import sync
+        def failing(method, path, body=None, params=None):
+            raise EnableBankingError(401, "Invalid JWT")
+        c, secrets = make()
+        c._http = failing
+        sync._pending.clear()
+        from finances.connectors import REGISTRY
+        old = REGISTRY["enable_banking"]
+        REGISTRY["enable_banking"] = lambda s: c
+        try:
+            class NoDb:
+                pass
+            st = sync.run_sync(NoDb(), secrets, ["enable_banking"])
+        finally:
+            REGISTRY["enable_banking"] = old
+        self.assertEqual(st["enable_banking"]["state"], "error")
+        self.assertIn("401", st["enable_banking"]["error"])
+        self.assertIn("Invalid JWT", st["enable_banking"]["error"])
+
     def test_expired_session_asks_again(self):
         c, secrets = make()
         secrets["eb_session"] = {"session_id": "old", "accounts": [], "initial_done": True,

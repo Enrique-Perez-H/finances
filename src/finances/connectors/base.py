@@ -21,6 +21,10 @@ class NeedsInput(Exception):
         self.field = field  # e.g. "code" -> the UI shows a text box
 
 
+class ConnectorError(Exception):
+    """An error whose message is safe to show in the UI (no secrets, no raw responses)."""
+
+
 @dataclass
 class Snapshot:
     accounts: list[dict] = field(default_factory=list)

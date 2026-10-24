@@ -30,7 +30,7 @@ from decimal import Decimal
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
-from .base import Connector, NeedsInput, Snapshot
+from .base import Connector, ConnectorError, NeedsInput, Snapshot
 
 API = "https://api.enablebanking.com"
 DEFAULT_REDIRECT = "http://localhost:8765/callback"
@@ -39,7 +39,7 @@ FIRST_SYNC_DAYS, LATER_SYNC_DAYS = 730, 60
 BALANCE_PREFERENCE = ["CLBD", "ITBD", "OPBD", "CLAV", "ITAV", "XPCD"]
 
 
-class EnableBankingError(Exception):
+class EnableBankingError(ConnectorError):
     def __init__(self, status: int, message: str = ""):
         super().__init__(f"Enable Banking HTTP {status}" + (f": {message}" if message else ""))
         self.status = status

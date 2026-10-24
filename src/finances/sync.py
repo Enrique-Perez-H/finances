@@ -1,7 +1,7 @@
 import contextlib
 
 from .connectors import REGISTRY
-from .connectors.base import NeedsInput
+from .connectors.base import ConnectorError, NeedsInput
 from .db import Database
 
 # Connectors that raised NeedsInput stay alive here so the next call can continue
@@ -35,7 +35,7 @@ def run_sync(db: Database, secrets: dict, names: list[str], inputs: dict | None 
             continue
         except Exception as e:  # keep one failing provider from blocking the rest
             # Only a type name or the connector's own message: never raw responses.
-            msg = str(e) if isinstance(e, (ValueError, RuntimeError)) else ""
+            msg = str(e) if isinstance(e, (ValueError, RuntimeError, ConnectorError)) else ""
             status[name] = {"state": "error", "error": f"{type(e).__name__}: {msg}".strip(": ")}
             continue
         with lock:
