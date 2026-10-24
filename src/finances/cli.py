@@ -17,6 +17,7 @@ def main(argv=None):
     sub.add_parser("sync", help="fetch data from the configured sources")
     s = sub.add_parser("serve", help="run the dashboard on localhost")
     s.add_argument("--port", type=int, default=8765)
+    sub.add_parser("status", help="show which secrets/sources are set (never their values)")
     forget = sub.add_parser("forget", help="delete all stored data of one provider (e.g. demo)")
     forget.add_argument("provider")
     sf = sub.add_parser("secret-file", help="store a file's contents (e.g. a .pem key) as a secret")
@@ -73,6 +74,25 @@ def _run(args):
         secrets[args.key] = value
         config.save_secrets(passphrase, secrets)
         print("Saved.")
+        return 0
+
+    if args.cmd == "status":
+        keys = sorted(k for k in secrets if not k.startswith("_"))
+        print("Secrets stored:", ", ".join(keys) or "none")
+        print("Sources:", secrets.get("sources") or "none set (run: finances secret sources)")
+        session = secrets.get("eb_session")
+        if session:
+            print(f"Bank consent valid until {session['valid_until']}, "
+                  f"{len(session['accounts'])} account(s)")
+        for k in ("eb_app_id", "eb_private_key", "tr_phone", "tr_pin"):
+            print(f"  {k}: {'set' if secrets.get(k) else 'MISSING'}")
+        if secrets.get("eb_private_key", "").startswith("-----BEGIN") is False and secrets.get("eb_private_key"):
+            print("  WARNING: eb_private_key does not look like a PEM key")
+        if secrets.get("eb_app_id"):
+            print(f"  eb_app_id length {len(secrets['eb_app_id'])} (a UUID has 36)")
+        db = Database(passphrase)
+        for r in db.conn.execute("SELECT provider, COUNT(*) n, MAX(updated_at) last FROM accounts GROUP BY provider"):
+            print(f"Data: {r['provider']}: {r['n']} account(s), last update {r['last']}")
         return 0
 
     db = Database(passphrase)
