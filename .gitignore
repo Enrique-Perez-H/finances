@@ -1,0 +1,24 @@
+# Real financial data and secrets must never live in this repo.
+# The app stores them in $FINANCES_HOME (default ~/.finances), outside the checkout.
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.enc
+*.csv
+*.ofx
+*.qif
+*.xlsx
+*.pem
+*.key
+.env
+.env.*
+secrets*
+!secrets.example.json
+
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/

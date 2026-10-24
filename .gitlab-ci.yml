@@ -1,0 +1,17 @@
+stages: [test]
+
+tests:
+  stage: test
+  image: python:3.12
+  script:
+    - pip install -e .
+    - python -m unittest discover -s tests -v
+    - sh scripts/check_no_data.sh $(git ls-files)
+
+secret-scan:
+  stage: test
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: [""]
+  script:
+    - gitleaks detect --source . --verbose

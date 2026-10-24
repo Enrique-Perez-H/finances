@@ -1,0 +1,12 @@
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+  - repo: local
+    hooks:
+      - id: no-financial-data
+        name: block data/secret files
+        entry: scripts/check_no_data.sh
+        language: script
+        pass_filenames: true
