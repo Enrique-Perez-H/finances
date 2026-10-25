@@ -368,6 +368,28 @@ def add_rule(db: Database, pattern: str, category: str, direction: str = "any") 
     return categorize_all(db)
 
 
+def import_rules(db: Database, items: list[dict]) -> dict:
+    """Add several rules at once (all validated first), then reclassify once."""
+    clean = []
+    for i, item in enumerate(items, 1):
+        if not isinstance(item, dict):
+            raise ValueError(f"rule {i}: expected an object with pattern, category, direction")
+        pattern, category = normalize(str(item.get("pattern", ""))), str(item.get("category", "")).strip()
+        direction = str(item.get("direction", "any"))
+        if len(pattern) < 2 or not category:
+            raise ValueError(f"rule {i}: pattern and category are required")
+        if pattern in GENERIC_PATTERNS:
+            raise ValueError(f'rule {i}: "{pattern}" is too generic')
+        if direction not in ("any", "in", "out"):
+            raise ValueError(f"rule {i}: direction must be any, in or out")
+        clean.append((pattern, "any" if category in EXCLUDED else direction, category))
+    for pattern, direction, category in clean:
+        db.conn.execute("INSERT INTO rules(pattern, direction, category) VALUES(?,?,?)"
+                        " ON CONFLICT(pattern, direction) DO UPDATE SET category=excluded.category",
+                        (pattern, direction, category))
+    return {"rules": len(clean), "changed": categorize_all(db)}
+
+
 def delete_rule(db: Database, pattern: str, direction: str | None = None) -> int:
     if direction:
         db.conn.execute("DELETE FROM rules WHERE pattern=? AND direction=?", (normalize(pattern), direction))

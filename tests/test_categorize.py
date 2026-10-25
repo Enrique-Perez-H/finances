@@ -186,6 +186,23 @@ class RobustRulesTests(IsolatedHome):
         self.assertEqual(analysis.monthly_cashflow(self.db)[0]["spending"], 20.0)
         self.assertIn(categorize.CAPITAL, categorize.all_categories(self.db))
 
+    def test_import_rules_all_or_nothing_and_reclassifies(self):
+        self.add("1", "TRANSFERENCIA DE MARTIN JIMENEZ SILVIA, CONCEPTO mensualidad", 562)
+        self.add("2", "TRANSFERENCIA A FAVOR DE INMOBAJOCINCA SOCIEDAD LIMITADA", -231000)
+        self.add("3", "RECIBO INMOBAJOCINCA SOCIEDAD LIMITADA", -3300)
+        categorize.add_rule(self.db, "inmobajocinca", "Housing")
+        result = categorize.import_rules(self.db, [
+            {"pattern": "mensualidad", "direction": "in", "category": "Other income"},
+            {"pattern": "a favor de inmobajocinca", "direction": "out", "category": categorize.CAPITAL}])
+        self.assertEqual(result["rules"], 2)
+        self.assertEqual((self.cat("1"), self.cat("2"), self.cat("3")),
+                         ("Other income", categorize.CAPITAL, "Housing"))  # longer rule wins; receipts stay
+        before = self.db.conn.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
+        with self.assertRaises(ValueError):  # one bad entry rejects the whole file
+            categorize.import_rules(self.db, [{"pattern": "ok shop", "category": "Other"},
+                                              {"pattern": "transferencia", "category": "Other"}])
+        self.assertEqual(self.db.conn.execute("SELECT COUNT(*) FROM rules").fetchone()[0], before)
+
     def test_old_rules_table_is_migrated(self):
         self.db.conn.executescript("""
             DROP TABLE rules;

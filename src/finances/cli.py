@@ -21,6 +21,8 @@ def main(argv=None):
     fd.add_argument("text")
     rl = sub.add_parser("rules", help="list your own category rules (or delete one)")
     rl.add_argument("--delete", metavar="PATTERN")
+    rl.add_argument("--import", dest="import_file", metavar="FILE",
+                    help="add rules from a JSON file: [{pattern, category, direction}, ...]")
     sub.add_parser("oddities", help="entries whose category does not fit their sign or size")
     mg = sub.add_parser("merge", help="merge a category into another (also renames)")
     mg.add_argument("src")
@@ -113,6 +115,13 @@ def _run(args):
     if args.cmd == "rules":
         from . import categorize
         db = Database(passphrase)
+        if args.import_file:
+            with open(os.path.expanduser(args.import_file)) as f:
+                result = categorize.import_rules(db, json.load(f))
+            db.save()
+            print(f"{result['rules']} rules added, {result['changed']} entries changed. "
+                  "You can delete the file now.")
+            return 0
         if args.delete:
             print(f"{categorize.delete_rule(db, args.delete)} entries changed.")
             db.save()
