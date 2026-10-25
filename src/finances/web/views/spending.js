@@ -3,12 +3,14 @@ import {card, row, el, eur, eur2, pct, get, post, note, button, barRow, category
 const QUICK = ['Internal transfer', 'Groceries', 'Restaurants & bars', 'Transport', 'Shopping',
   'Subscriptions', 'Utilities & telecom', 'Health', 'Home & furniture', 'Leisure', 'Other'];
 let month = null;
+let avgMonths = (() => { try { return Number(localStorage.getItem('avgMonths') ?? 12); } catch (e) { return 12; } })();
 let openCategory = null;
 
 export async function render(root) {
-  const [s, review, cats, rules, generic, pairs] = await Promise.all([
+  const [s, review, cats, rules, generic, pairs, avg] = await Promise.all([
     get('/api/spending' + (month ? `?month=${month}` : '')), get('/api/review'),
-    get('/api/categories'), get('/api/rules'), get('/api/review/generic'), get('/api/pairs')]);
+    get('/api/categories'), get('/api/rules'), get('/api/review/generic'), get('/api/pairs'),
+    get(`/api/spending/average?months=${avgMonths}`)]);
   month = s.month;
   const reload = () => render(root);
 
@@ -21,6 +23,7 @@ export async function render(root) {
     el('div', {className: 'big', textContent: eur(s.total)}),
     delta === null ? null : note(`${delta >= 0 ? '+' : ''}${eur(delta)} vs ${s.previous_month}`))];
 
+  parts.push(averageCard(avg, reload));
   if (review.length) parts.push(reviewCard(review, cats, reload, s.unclear));
   if (generic.total) parts.push(genericCard(generic, cats, reload));
 
@@ -139,4 +142,27 @@ function categoriesCard(cats, reload) {
     note('Merge a category into another, or rename it by typing a new name. It applies to all entries and to future syncs.'),
     el('div', {className: 'muted', textContent: 'Move everything in:'}), from,
     el('div', {className: 'muted', textContent: 'into (existing or new name):'}), to.wrap, go);
+}
+
+// A typical month: average per category over the last completed months.
+function averageCard(avg, reload) {
+  const choices = [[3, '3m'], [6, '6m'], [12, '12m'], [0, 'All']];
+  const buttons = el('div', {className: 'ranges'}, ...choices.map(([n, label]) => {
+    const b = el('button', {textContent: label, className: n === avgMonths ? 'on' : ''});
+    b.addEventListener('click', () => {
+      avgMonths = n;
+      try { localStorage.setItem('avgMonths', String(n)); } catch (e) { /* private mode */ }
+      reload();
+    });
+    return b;
+  }));
+  if (!avg.months_used) {
+    return card('Average month', buttons, note('Needs at least one completed month of transactions.'));
+  }
+  const max = avg.categories.length ? avg.categories[0].average : 0;
+  return card('Average month', buttons,
+    el('div', {className: 'big', textContent: eur(avg.total)}),
+    note(`spent per month on average · ${avg.months_used} completed month${avg.months_used === 1 ? '' : 's'} (${avg.first} to ${avg.last})`),
+    ...avg.categories.map(c => barRow(c.category, c.average, max, `${eur(c.average)} · ${pct(c.share)}`)),
+    note('A month without spending in a category counts as zero. The month in progress, transfers between your accounts, one-off capital items and reimbursed payments are not counted.'));
 }

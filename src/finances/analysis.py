@@ -12,16 +12,44 @@ def net_worth(db: Database) -> dict:
     return {"total": round(sum(by_kind.values()), 2), "by_kind": by_kind}
 
 
-def monthly_cashflow(db: Database, months: int = 6) -> list[dict]:
+def monthly_cashflow(db: Database, months: int = 6, today: date | None = None) -> list[dict]:
+    """Income and spending per month, oldest first. The current month is flagged `partial`.
+    Moves between your accounts, one-off capital items and reimbursement pairs are left out."""
+    current = (today or date.today()).isoformat()[:7]
     rows = db.conn.execute(
         "SELECT substr(date,1,7) AS month,"
         " SUM(CASE WHEN amount>0 THEN amount ELSE 0 END) AS income,"
         " SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END) AS spending"
         " FROM transactions WHERE category NOT IN (?, ?) AND paired_with = ''"
         " GROUP BY month ORDER BY month DESC LIMIT ?", (INTERNAL, CAPITAL, months)).fetchall()
-    return [dict(month=r["month"], income=round(r["income"], 2),
-                 spending=round(r["spending"], 2),
-                 saved=round(r["income"] - r["spending"], 2)) for r in reversed(rows)]
+    return [dict(month=r["month"], income=round(r["income"], 2), spending=round(r["spending"], 2),
+                 saved=round(r["income"] - r["spending"], 2), partial=r["month"] == current)
+            for r in reversed(rows)]
+
+
+def average_month(db: Database, months: int | None = 12, today: date | None = None) -> dict:
+    """What a typical month looks like: average spending per category over the last
+    `months` completed months (None = all). Months without spending in a category count as zero."""
+    current = (today or date.today()).isoformat()[:7]
+    available = [r[0] for r in db.conn.execute(
+        "SELECT DISTINCT substr(date,1,7) m FROM transactions WHERE substr(date,1,7) < ? ORDER BY m DESC",
+        (current,))]
+    used = available[:months] if months else available
+    if not used:
+        return dict(months_used=0, first=None, last=None, total=0.0, categories=[])
+    marks = ",".join("?" * len(used))
+    rows = db.conn.execute(
+        f"SELECT category, SUM(-amount) AS total, COUNT(DISTINCT substr(date,1,7)) AS active"
+        f" FROM transactions WHERE amount<0 AND category NOT IN (?, ?) AND paired_with = ''"
+        f" AND substr(date,1,7) IN ({marks}) GROUP BY category ORDER BY total DESC",
+        (INTERNAL, CAPITAL, *used)).fetchall()
+    n = len(used)
+    grand = sum(r["total"] for r in rows)
+    return dict(
+        months_used=n, first=min(used), last=max(used), total=round(grand / n, 2),
+        categories=[dict(category=r["category"], average=round(r["total"] / n, 2),
+                         total=round(r["total"], 2), active_months=r["active"],
+                         share=round(r["total"] / grand, 4) if grand else 0) for r in rows])
 
 
 def spending_by_category(db: Database, month: str | None = None) -> list[dict]:

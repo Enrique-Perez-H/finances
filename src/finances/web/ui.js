@@ -109,7 +109,7 @@ export function lineChart(series, labels = [], {format = eur, notes = []} = {}) 
     readout.replaceChildren(el('strong', {textContent: labels[i] ?? `#${i + 1}`}),
       ...series.map((s, k) => el('span', {}, el('i', {className: `sw s${k}`}), `${s.label}: `,
         s.values[i] === null ? '–' : format(s.values[i]))),
-      notes[i] ? el('em', {className: 'warn', textContent: notes[i]}) : null);
+      ...(notes[i] ? [el('em', {className: 'warn', textContent: notes[i]})] : []));
   };
   const pick = ev => {
     const rect = svg.getBoundingClientRect();
@@ -124,7 +124,7 @@ export function lineChart(series, labels = [], {format = eur, notes = []} = {}) 
 
 export function legend(series) {
   return el('div', {className: 'legend'}, ...series.map((s, k) =>
-    el('span', {}, el('i', {className: `sw s${k}`}), s.label)));
+    el('span', {}, el('i', {className: `sw s${k}`, style: s.color ? `background:${s.color}` : ''}), s.label)));
 }
 
 export function barRow(label, value, max, rightText, onclick) {
@@ -157,4 +157,51 @@ export function categoryPicker(categories, onChoose, {current = '', placeholder 
     if (value) onChoose(value);
   });
   return sel;
+}
+
+// Grouped bars per label with a y axis. series = [{label, values, color}]. Tap a month to read it.
+export function barChart(series, labels = [], {format = eur, notes = []} = {}) {
+  const W = 340, H = 160, L = 46, R = 8, T = 8, B = 20;
+  const n = labels.length || 1;
+  const maxV = Math.max(...series.flatMap(s => s.values), 1);
+  const ticks = niceTicks(0, maxV);
+  const hi = ticks[ticks.length - 1];
+  const y = v => T + (1 - v / hi) * (H - T - B);
+  const slot = (W - L - R) / n, pad = Math.min(6, slot * 0.2);
+  const barW = Math.max(1.5, (slot - 2 * pad) / series.length);
+  const svg = svgEl('svg', {viewBox: `0 0 ${W} ${H}`, role: 'img', class: 'chart'});
+  ticks.forEach(t => {
+    svg.append(svgEl('line', {x1: L, x2: W - R, y1: y(t), y2: y(t), class: t === 0 ? 'axis zero' : 'axis'}));
+    const label = svgEl('text', {x: L - 5, y: y(t) + 3, 'text-anchor': 'end', class: 'tick'});
+    label.textContent = compact(t);
+    svg.append(label);
+  });
+  const marker = svgEl('rect', {y: T, height: H - T - B, width: slot, class: 'band', visibility: 'hidden'});
+  svg.append(marker);
+  series.forEach((s, k) => s.values.forEach((v, i) => svg.append(svgEl('rect', {
+    x: L + i * slot + pad + k * barW, y: y(v), width: Math.max(barW - 1, 1), height: Math.max(H - B - y(v), 0),
+    rx: 1.5, fill: s.color || 'var(--accent)'}))));
+  const shown = n <= 4 ? [...Array(n).keys()] : [0, Math.round((n - 1) / 3), Math.round(2 * (n - 1) / 3), n - 1];
+  shown.forEach(i => {
+    const t = svgEl('text', {x: L + (i + 0.5) * slot, y: H - 5, class: 'tick', 'text-anchor': 'middle'});
+    t.textContent = labels[i];
+    svg.append(t);
+  });
+  const readout = el('div', {className: 'readout'});
+  const select = i => {
+    marker.setAttribute('x', L + i * slot);
+    marker.setAttribute('visibility', 'visible');
+    readout.replaceChildren(el('strong', {textContent: labels[i]}),
+      ...series.map(s => el('span', {}, el('i', {className: 'sw', style: `background:${s.color}`}), `${s.label}: ${format(s.values[i])}`)),
+      ...(notes[i] ? [el('em', {className: 'warn', textContent: notes[i]})] : []));
+  };
+  const pick = ev => {
+    const rect = svg.getBoundingClientRect();
+    const px = ((ev.clientX - rect.left) / rect.width) * W;
+    select(Math.max(0, Math.min(n - 1, Math.floor((px - L) / slot))));
+  };
+  svg.addEventListener('pointerdown', pick);
+  svg.addEventListener('pointermove', ev => { if (ev.buttons) pick(ev); });
+  select(n - 1);
+  return el('div', {className: 'chartbox'}, svg, readout);
 }

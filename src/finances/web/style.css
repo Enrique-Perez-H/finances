@@ -51,3 +51,10 @@ label.muted{display:flex;align-items:center;gap:8px;margin:8px 0}
 details.group{border-top:1px solid color-mix(in srgb,var(--muted) 30%,transparent);padding:8px 0}
 details.group summary{cursor:pointer;display:flex;justify-content:space-between;gap:10px}
 .pair{border-top:1px solid color-mix(in srgb,var(--muted) 30%,transparent);padding:8px 0}
+
+.band{fill:var(--muted);fill-opacity:.15}
+table.months{width:100%;border-collapse:collapse;font-size:.85rem;margin-top:8px}
+table.months th{color:var(--muted);font-weight:500;text-align:right;padding:4px 0}
+table.months th:first-child,table.months td:first-child{text-align:left}
+table.months td{text-align:right;padding:5px 0;border-top:1px solid color-mix(in srgb,var(--muted) 25%,transparent);white-space:nowrap}
+table.months tr.avg td{font-weight:600}
