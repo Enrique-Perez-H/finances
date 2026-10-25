@@ -97,6 +97,30 @@ class RealWorldTests(IsolatedHome):
         self.assertEqual(db.conn.execute("SELECT COUNT(*) FROM transactions WHERE category='Groceries'").fetchone()[0], 1)
 
 
+class SpanishBankDataTests(IsolatedHome):
+    def test_plain_transfers_are_asked_about_not_guessed(self):
+        for text in ("TRANSFERENCIA A FAVOR DE JUAN PEREZ", "TRANSFERENCIA DE CARLOS"):
+            self.assertEqual(classify(text, -5000, [])[0], UNCATEGORIZED)
+            self.assertEqual(classify(text, 5000, [])[0], UNCATEGORIZED)
+
+    def test_social_security_and_pension(self):
+        self.assertEqual(classify("TGSS COTIZACION", -300, [])[0], "Taxes & fees")
+        self.assertEqual(classify("PENSION TESORERIA GENERAL", 2200, [])[0], "Pension & benefits")
+
+    def test_near_duplicate_names_fold_into_the_builtin_one(self):
+        db = Database("pw")
+        db.upsert_account(dict(id="a", provider="t", name="A", kind="cash", currency="EUR",
+                               balance=0, updated_at="t"))
+        for i, cat in enumerate(("Insurances", "other", "hairdresser")):
+            db.upsert_transaction(dict(id=str(i), account_id="a", date="2026-01-01", amount=-10,
+                                       description="X", category=cat, cat_source="manual"))
+        categorize.categorize_all(db)
+        cats = {r[0] for r in db.conn.execute("SELECT category FROM transactions")}
+        self.assertEqual(cats, {"Insurance", "Other", "hairdresser"})  # your own names stay
+        self.assertNotIn("Insurances", categorize.all_categories(db))
+        self.assertIn("hairdresser", categorize.all_categories(db))
+
+
 class CategoryNamesTests(IsolatedHome):
     def setUp(self):
         super().setUp()

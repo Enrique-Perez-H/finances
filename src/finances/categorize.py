@@ -12,8 +12,8 @@ from .db import Database
 
 UNCATEGORIZED = "uncategorized"
 INTERNAL = "Internal transfer"  # moves between your own accounts: not spending, not income
-INCOME_CATEGORIES = ["Salary", "Transfers received", "Interest & dividends", "Refunds",
-                     "Other income"]
+INCOME_CATEGORIES = ["Salary", "Pension & benefits", "Transfers received", "Interest & dividends",
+                     "Refunds", "Other income"]
 EXPENSE_CATEGORIES = [
     "Groceries", "Restaurants & bars", "Transport", "Housing", "Home & furniture",
     "Utilities & telecom", "Subscriptions", "Health", "Shopping", "Leisure", "Travel",
@@ -117,8 +117,10 @@ DEFAULT_RULES = [
     ("bauhaus", "Home & furniture", None), ("maisons du monde", "Home & furniture", None),
     ("electrodomesticos", "Home & furniture", None), ("bricomart", "Home & furniture", None),
     ("brico depot", "Home & furniture", None), ("cocinas", "Home & furniture", None),
+    ("tgss", "Taxes & fees", None), ("seguridad social", "Taxes & fees", None),
+    ("cotizacion", "Taxes & fees", None), ("tesoreria", "Taxes & fees", "Pension & benefits"),
+    ("pension", "Other", "Pension & benefits"), ("jubilacion", "Other", "Pension & benefits"),
     ("bizum", "Other", "Transfers received"),
-    ("transferencia", "Other", "Transfers received"),
     ("trade republic", INTERNAL, INTERNAL), ("traderepublic", INTERNAL, INTERNAL),
     ("trbkdebb", INTERNAL, INTERNAL), ("traspaso", INTERNAL, INTERNAL),
     ("entre cuentas", INTERNAL, INTERNAL),
@@ -239,8 +241,20 @@ def _classify(text, amount, user_rules, mcc):
     return UNCATEGORIZED, ""
 
 
+def _fold(name: str) -> str:
+    return name.strip().casefold().rstrip("s")
+
+
 def aliases(db: Database) -> dict:
-    return {r["src"]: r["dst"] for r in db.conn.execute("SELECT src, dst FROM category_aliases")}
+    """Your merges, plus automatic ones for near-duplicates of a built-in name
+    (different capitals or a trailing 's': 'other' -> 'Other', 'Insurances' -> 'Insurance')."""
+    builtin = EXPENSE_CATEGORIES + INCOME_CATEGORIES + [INTERNAL]
+    folded = {_fold(c): c for c in builtin}
+    used = {r[0] for r in db.conn.execute("SELECT DISTINCT category FROM transactions")}
+    used |= {r[0] for r in db.conn.execute("SELECT DISTINCT category FROM rules")}
+    auto = {c: folded[_fold(c)] for c in used
+            if c not in builtin and c != UNCATEGORIZED and _fold(c) in folded}
+    return {**auto, **{r["src"]: r["dst"] for r in db.conn.execute("SELECT src, dst FROM category_aliases")}}
 
 
 def apply_aliases(db: Database) -> int:

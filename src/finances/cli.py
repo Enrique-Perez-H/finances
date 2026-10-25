@@ -19,6 +19,11 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8765)
     fd = sub.add_parser("find", help="search your entries by text (shown only in your terminal)")
     fd.add_argument("text")
+    sub.add_parser("rules", help="list your own category rules")
+    sub.add_parser("oddities", help="entries whose category does not fit their sign or size")
+    mg = sub.add_parser("merge", help="merge a category into another (also renames)")
+    mg.add_argument("src")
+    mg.add_argument("dst")
     sub.add_parser("recategorize", help="apply the current rules and category names to every entry")
     sub.add_parser("categories", help="every category with how many entries and how much it holds")
     um = sub.add_parser("unmatched", help="most common entries that could not be categorised")
@@ -104,6 +109,36 @@ def _run(args):
             print(f"Data: {r['provider']}: {r['n']} account(s), last update {r['last']}")
         return 0
 
+    if args.cmd == "rules":
+        db = Database(passphrase)
+        for r in db.conn.execute("SELECT pattern, category FROM rules ORDER BY category, pattern"):
+            print(f"{r['category']:<24} <- \"{r['pattern']}\"")
+        return 0
+    if args.cmd == "merge":
+        from . import categorize
+        db = Database(passphrase)
+        print(f"{categorize.merge_category(db, args.src, args.dst)} entries moved.")
+        db.save()
+        return 0
+    if args.cmd == "oddities":
+        from . import categorize
+        db = Database(passphrase)
+        income = set(categorize.INCOME_CATEGORIES)
+        special = {categorize.INTERNAL, categorize.UNCATEGORIZED}
+        print("Money IN under a spending category (biggest first):")
+        for r in db.conn.execute(
+                "SELECT date, amount, category, cat_source, description FROM transactions"
+                " WHERE amount > 100 AND paired_with='' ORDER BY amount DESC"):
+            if r["category"] not in income and r["category"] not in special:
+                print(f"{r['date']} {r['amount']:>10.2f}  {r['category']:<18} {r['cat_source'] or 'auto':<9} "
+                      f"{r['description'][:60]}")
+        print("Biggest money OUT (any category):")
+        for r in db.conn.execute(
+                "SELECT date, amount, category, cat_source, description FROM transactions"
+                " WHERE amount < -1000 AND paired_with='' ORDER BY amount LIMIT 15"):
+            print(f"{r['date']} {r['amount']:>10.2f}  {r['category']:<18} {r['cat_source'] or 'auto':<9} "
+                  f"{r['description'][:60]}")
+        return 0
     if args.cmd == "recategorize":
         from . import categorize
         db = Database(passphrase)

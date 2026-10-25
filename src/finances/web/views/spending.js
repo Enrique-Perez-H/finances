@@ -38,7 +38,7 @@ export async function render(root) {
 }
 
 function reviewCard(review, cats, reload, unclear) {
-  const items = review.slice(0, 8).map(g => {
+  const items = review.slice(0, 12).map(g => {
     const pattern = el('input', {value: g.pattern, className: 'wide'});
     const choose = async category => {
       await post('/api/categorize', {pattern: pattern.value, category});
@@ -53,7 +53,7 @@ function reviewCard(review, cats, reload, unclear) {
   });
   return card(`To review (${unclear} entries)`,
     note('I could not classify these. Your answer becomes a rule applied to every matching entry, now and on future syncs.'),
-    ...items, review.length > 8 ? note(`${review.length - 8} more after these.`) : null);
+    ...items, review.length > 12 ? note(`${review.length - 12} more after these.`) : null);
 }
 
 function genericCard(generic, cats, reload) {

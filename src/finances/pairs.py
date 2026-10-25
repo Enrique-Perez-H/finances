@@ -15,7 +15,7 @@ TOLERANCE = 0.01          # amounts within 1% of the larger one count as equal
 WINDOW_DAYS = 60          # the reimbursement arrives up to this long after the spend
 EARLY_DAYS = 2            # ...or at most this many days before it
 MIN_AMOUNT = 1.0
-NOT_REIMBURSEMENTS = ("Salary", "Interest & dividends")
+NOT_REIMBURSEMENTS = ("Salary", "Pension & benefits", "Interest & dividends")
 
 
 def _days(a: str, b: str) -> int:
