@@ -43,6 +43,17 @@ ATTENDED_MIN_INTERVAL = timedelta(minutes=10)
 BALANCE_PREFERENCE = ["CLBD", "ITBD", "OPBD", "CLAV", "ITAV", "XPCD"]
 
 
+def _count_fields(counts: Counter, value, prefix: str = "") -> None:
+    """Count which fields hold a value (names only, never the values themselves)."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            _count_fields(counts, v, f"{prefix}.{k}" if prefix else k)
+    elif value not in (None, "", [], {}):
+        counts[prefix] += 1
+    if prefix == "":
+        counts["_transactions"] += 1
+
+
 class EnableBankingError(ConnectorError):
     def __init__(self, status: int, message: str = ""):
         super().__init__(f"Enable Banking HTTP {status}" + (f": {message}" if message else ""))
@@ -242,7 +253,7 @@ class EnableBankingConnector(Connector):
         chosen = next((by_type[t] for t in BALANCE_PREFERENCE if t in by_type), balances[0])
         return Decimal(str(chosen["balance_amount"]["amount"]))
 
-    def _transactions(self, acct: dict, date_from: str, headers: dict) -> list[dict]:
+    def _transactions(self, acct: dict, date_from: str, headers: dict, fields: Counter | None = None) -> list[dict]:
         out, seen, key = [], Counter(), None
         while True:
             params = {"date_from": date_from}
@@ -251,6 +262,8 @@ class EnableBankingConnector(Connector):
             page = self._http("GET", f"/accounts/{acct['uid']}/transactions", params=params,
                               headers=headers)
             for tx in page.get("transactions", []):
+                if fields is not None:
+                    _count_fields(fields, tx)
                 mapped = map_transaction(tx, acct["id"], seen)
                 if mapped:
                     out.append(mapped)
@@ -275,6 +288,7 @@ class EnableBankingConnector(Connector):
         date_from = (self._now() - timedelta(days=days)).date().isoformat()
         now = self._now().isoformat(timespec="seconds")
         snap = Snapshot()
+        fields = Counter()
         try:
             for acct in session["accounts"]:
                 balance = self._balance(acct["uid"], headers)
@@ -282,7 +296,7 @@ class EnableBankingConnector(Connector):
                     id=acct["id"], provider=acct["provider"], name=acct["name"],
                     kind=acct["kind"], currency=acct["currency"], balance=float(balance),
                     updated_at=now))
-                snap.transactions += self._transactions(acct, date_from, headers)
+                snap.transactions += self._transactions(acct, date_from, headers, fields)
         except EnableBankingError as e:
             if e.status == 429:
                 self.secrets["eb_last_fetch"] = self._now().isoformat()  # start the cool-down
@@ -295,6 +309,9 @@ class EnableBankingConnector(Connector):
             raise
         session["initial_done"] = True
         self.secrets["eb_last_fetch"] = self._now().isoformat()
+        total = fields.pop("_transactions", 0)
+        self.secrets["eb_fields"] = {"transactions": total, "fields": dict(fields.most_common()),
+                                     "at": self._now().isoformat(timespec="minutes")}
         return snap
 
     def field_report(self, days: int = 45) -> dict:

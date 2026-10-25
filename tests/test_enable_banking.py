@@ -182,6 +182,18 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(map_transaction(tx, "acc", Counter())["mcc"], "5411")
         self.assertEqual(map_transaction(FakeBank.tx("5", "DBIT", "2026-01-01", "x"), "acc", Counter())["mcc"], "")
 
+    def test_sync_records_field_names_without_extra_requests_or_values(self):
+        c, secrets = make()
+        with self.assertRaises(NeedsInput):
+            c.fetch()
+        c.fetch(user_input="C1")
+        report = secrets["eb_fields"]
+        self.assertEqual(report["transactions"], 5)
+        self.assertEqual(report["fields"]["booking_date"], 5)
+        self.assertNotIn("_transactions", report["fields"])
+        self.assertNotIn("Mercadona", json.dumps(report))
+        self.assertNotIn("20.00", json.dumps(report))
+
     def test_field_report_has_names_and_counts_but_no_values(self):
         c, secrets = make()
         with self.assertRaises(NeedsInput):

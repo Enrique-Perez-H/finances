@@ -23,7 +23,8 @@ def main(argv=None):
     sub.add_parser("categories", help="every category with how many entries and how much it holds")
     um = sub.add_parser("unmatched", help="most common entries that could not be categorised")
     um.add_argument("--top", type=int, default=30)
-    sub.add_parser("fields", help="which fields the bank fills in (counts only, no values)")
+    ff = sub.add_parser("fields", help="which fields the bank fills in (counts only, no values)")
+    ff.add_argument("--live", action="store_true", help="ask the bank again (uses up daily reads)")
     sub.add_parser("status", help="show which secrets/sources are set (never their values)")
     forget = sub.add_parser("forget", help="delete all stored data of one provider (e.g. demo)")
     forget.add_argument("provider")
@@ -139,9 +140,14 @@ def _run(args):
         return 0
     if args.cmd == "fields":
         from .connectors.enable_banking import EnableBankingConnector
-        report = EnableBankingConnector(secrets).field_report()
-        print(f"{report['transactions']} transactions in the last 45 days. "
-              "Fields with a value (count):")
+        report = secrets.get("eb_fields")
+        if args.live or not report:
+            report = EnableBankingConnector(secrets).field_report()
+            print(f"{report['transactions']} transactions in the last 45 days (live). "
+                  "Fields with a value (count):")
+        else:
+            print(f"{report['transactions']} transactions seen at the last sync ({report['at']}). "
+                  "Fields with a value (count):")
         for name, n in report["fields"].items():
             print(f"  {name}: {n}")
         return 0
