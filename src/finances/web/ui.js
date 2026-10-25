@@ -57,7 +57,7 @@ function niceTicks(min, max, count = 4) {
 
 // Line chart with a y axis. series = [{label, values}] (null = unknown, breaks the line).
 // Click or drag on the chart to read the values of that point in the box underneath.
-export function lineChart(series, labels = [], {format = eur, notes = []} = {}) {
+export function lineChart(series, labels = [], {format = eur, notes = [], onSelect = null} = {}) {
   const W = 340, H = 150, L = 46, R = 8, T = 8, B = 20;
   const all = series.flatMap(s => s.values).filter(v => v !== null);
   if (!all.length) all.push(0);
@@ -110,6 +110,7 @@ export function lineChart(series, labels = [], {format = eur, notes = []} = {}) 
       ...series.map((s, k) => el('span', {}, el('i', {className: `sw s${k}`}), `${s.label}: `,
         s.values[i] === null ? '–' : format(s.values[i]))),
       ...(notes[i] ? [el('em', {className: 'warn', textContent: notes[i]})] : []));
+    if (onSelect) onSelect(i);
   };
   const pick = ev => {
     const rect = svg.getBoundingClientRect();

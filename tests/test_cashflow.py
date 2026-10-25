@@ -72,6 +72,29 @@ class CashflowTests(IsolatedHome):
         categorize.categorize_all(self.db)
         self.assertEqual(analysis.average_month(self.db, 12, today=TODAY)["categories"], [])
 
+    def test_top_entries_of_a_month(self):
+        self.seed()
+        for i, amt in enumerate((-50, -700, -20, -300), 1):
+            self.add(f"2026-05-{10 + i}", amt, "Shopping")
+        self.add("2026-05-20", 500, "Other income")
+        self.add("2026-05-21", 30, "Transfers received")
+        top = analysis.top_entries(self.db, "2026-05", 3)
+        self.assertEqual([t["amount"] for t in top["spends"]], [-700, -600, -300])  # internal/capital skipped
+        self.assertEqual([t["amount"] for t in top["incomes"]], [2000, 500, 30])
+        self.assertEqual(top["spends"][0]["category"], "Shopping")
+        self.assertEqual(len(analysis.top_entries(self.db, "2026-05", 1)["spends"]), 1)
+        self.assertEqual(analysis.top_entries(self.db, "2030-01")["spends"], [])
+        for bad in ("", "2026", "2026-5", "abcd-ef", "2026-05-01"):
+            with self.assertRaises(ValueError):
+                analysis.top_entries(self.db, bad)
+
+    def test_top_ignores_reimbursed_pairs(self):
+        self.add("2026-05-01", -80, "Restaurants & bars")
+        self.add("2026-05-03", 80, "Transfers received")
+        categorize.categorize_all(self.db)
+        top = analysis.top_entries(self.db, "2026-05")
+        self.assertEqual((top["spends"], top["incomes"]), ([], []))
+
     def test_endpoints(self):
         run_sync(self.db, {}, ["demo"])
         srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.db, {}))
@@ -82,6 +105,9 @@ class CashflowTests(IsolatedHome):
                     return json.loads(r.read())
             flow = get("/api/cashflow?months=600")
             self.assertTrue(flow and {"month", "income", "spending", "saved", "partial"} <= set(flow[0]))
+            top = get("/api/top?month=" + flow[-2]["month"])
+            self.assertEqual(set(top), {"month", "spends", "incomes"})
+            self.assertLessEqual(len(top["spends"]), 3)
             avg = get("/api/spending/average?months=3")
             self.assertEqual(avg["months_used"], 3)
             self.assertGreater(avg["total"], 0)

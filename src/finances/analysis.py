@@ -157,3 +157,21 @@ def entries(db: Database, category: str | None = None, since: str | None = None,
         t["pattern"] = suggest_pattern(t["key"], t["description"])
     return dict(items=page, count=len(rows), total_in=total_in, total_out=total_out,
                 has_more=max(offset, 0) + limit < len(rows))
+
+
+def top_entries(db: Database, month: str, n: int = 3) -> dict:
+    """The biggest single spends and incomes of one month, counted like the monthly totals
+    (own-account moves, one-off capital items and reimbursed pairs are left out)."""
+    if len(month) != 7 or month[4] != "-" or not (month[:4] + month[5:]).isdigit():
+        raise ValueError("month must look like 2026-05")
+    n = max(1, min(n, 20))
+
+    def pick(sign: str, order: str):
+        rows = db.conn.execute(
+            f"SELECT date, amount, description, category FROM transactions"
+            f" WHERE substr(date,1,7)=? AND amount {sign} 0 AND category NOT IN (?, ?)"
+            f" AND paired_with='' ORDER BY amount {order}, date, id LIMIT ?",
+            (month, INTERNAL, CAPITAL, n)).fetchall()
+        return [dict(r) for r in rows]
+
+    return dict(month=month, spends=pick("<", "ASC"), incomes=pick(">", "DESC"))

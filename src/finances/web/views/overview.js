@@ -1,4 +1,4 @@
-import {card, row, el, eur, get, note, lineChart, barChart, legend} from '../ui.js';
+import {card, row, el, eur, eur2, get, note, lineChart, barChart, legend} from '../ui.js';
 
 const LABELS = {cash: 'Cash', savings: 'Savings', investment: 'Investments'};
 const RANGES = [['6m', 6], ['12m', 12], ['2y', 24], ['All', null]];
@@ -40,6 +40,24 @@ export async function render(root) {
     return entry[1] ? rows.slice(-entry[1]) : rows;
   };
 
+  // Biggest single spends and incomes of the month selected on the evolution chart.
+  let topToken = 0;
+  const topBox = el('div', {className: 'top'});
+  const showTop = async month => {
+    const token = ++topToken;
+    let top;
+    try { top = await get(`/api/top?month=${month}&n=3`); } catch (e) { return; }
+    if (token !== topToken) return;  // a newer selection has replaced this one
+    const list = (title, items, cls) => el('div', {},
+      el('div', {className: 'muted', textContent: title}),
+      ...(items.length ? items.map(t => el('div', {className: 'entry'},
+        el('div', {className: 'row'}, el('span', {textContent: t.description.slice(0, 34)}),
+          el('span', {className: cls, textContent: eur2(t.amount)})),
+        note(`${t.date} · ${t.category}`))) : [note('None')]));
+    topBox.replaceChildren(el('strong', {textContent: `Top 3 in ${month}`}),
+      list('Biggest spends', top.spends, 'neg'), list('Biggest incomes', top.incomes, 'pos'));
+  };
+
   const drawEvolution = () => {
     const rows = windowOf(d.rows);
     const kinds = ['cash', 'savings', 'investment'].filter(k => rows.some(r => r[k] !== null));
@@ -47,8 +65,10 @@ export async function render(root) {
       {label: 'Total', values: rows.map(r => r.total)}];  // sum of the known parts
     const points = Math.max(...series.map(s => s.values.filter(v => v !== null).length));
     evolutionCard.replaceChildren(el('h2', {textContent: 'Evolution'}), buttons(),
-      points >= 2 ? lineChart(series, rows.map(r => r.month),
-        {notes: rows.map(r => r.partial ? 'Total leaves out accounts with no data for this month.' : '')}) : null,
+      points >= 2 ? lineChart(series, rows.map(r => r.month), {
+        notes: rows.map(r => r.partial ? 'Total leaves out accounts with no data for this month.' : ''),
+        onSelect: i => showTop(rows[i].month)}) : null,
+      points >= 2 ? topBox : null,
       legend(series),
       note(points >= 2
         ? 'Tap or drag on the chart to read a month. The total is the sum of the lines that have data; early months leave out investments, which start when you first synced.'

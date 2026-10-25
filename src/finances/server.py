@@ -51,6 +51,7 @@ def _num(query: dict, key: str, default: float) -> float:
 # GET routes: (db, query) -> JSON-able. Read-only.
 GET_ROUTES = {
     "/api/summary": lambda db, q: analysis.summary(db),
+    "/api/top": lambda db, q: analysis.top_entries(db, _q(q, "month", ""), int(_num(q, "n", 3))),
     "/api/cashflow": lambda db, q: analysis.monthly_cashflow(db, int(_num(q, "months", 600))),
     "/api/spending/average": lambda db, q: analysis.average_month(
         db, int(_num(q, "months", 12)) or None),
