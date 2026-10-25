@@ -11,7 +11,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis, categorize, config, forecast, fund, history, income, pairs, recurring
+from . import analysis, categorize, config, forecast, fund, history, income, pairs, recurring, sonfund
 from .db import Database
 from .sync import run_sync
 
@@ -70,6 +70,7 @@ GET_ROUTES = {
         extra_cost=_num(q, "extra_cost", 0),
         include_other_income=_q(q, "other_income", "1") != "0"),
     "/api/funds": lambda db, q: fund.list_plans(db),
+    "/api/sonfund": lambda db, q: sonfund.payload(db),
     "/api/evolution": lambda db, q: history.evolution(db, int(_num(q, "months", 24))),
     "/api/pairs": lambda db, q: pairs.listing(db),
     "/api/review": lambda db, q: categorize.review_queue(db),
@@ -138,9 +139,30 @@ def _post_account_kind(db, body):
     return {"ok": True}
 
 
+def _post_sonfund(db, body):
+    cfg = sonfund.save_config(db, body)
+    db.save()
+    return cfg
+
+
+def _post_sonfund_deposit(db, body):
+    dep = sonfund.add_deposit(db, body)
+    db.save()
+    return dep
+
+
+def _post_sonfund_deposit_delete(db, body):
+    sonfund.delete_deposit(db, body.get("id"))
+    db.save()
+    return {"ok": True}
+
+
 # POST routes: (db, body) -> JSON-able. These change local data only.
 POST_ROUTES = {
     "/api/accounts/kind": _post_account_kind,
+    "/api/sonfund": _post_sonfund,
+    "/api/sonfund/deposit": _post_sonfund_deposit,
+    "/api/sonfund/deposit/delete": _post_sonfund_deposit_delete,
     "/api/funds": _post_fund_save,
     "/api/funds/delete": _post_fund_delete,
     "/api/funds/preview": lambda db, body: fund.preview(db, body),

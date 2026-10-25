@@ -129,6 +129,7 @@ class TimelineMappingTests(unittest.TestCase):
         t = map_timeline_item(item())
         self.assertEqual((t["id"], t["date"], t["amount"], t["category"], t["cat_source"]),
                          ("tr-e1", "2026-05-02", 12.34, "Interest & dividends", "connector"))
+        self.assertTrue(t["description"].startswith("TR interest"))  # told apart from dividends
         self.assertEqual(t["account_id"], "tr-cash")
 
     def test_moves_between_cash_and_investments_are_internal(self):

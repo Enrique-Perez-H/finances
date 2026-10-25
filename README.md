@@ -33,7 +33,7 @@ python -m unittest discover -s tests
 | Income | What you receive: salary, transfers, interest, by type, source and month |
 | Recurring | Detected recurring costs and income, monthly and yearly totals, what is coming up |
 | Forecast | Projects income, spending and wealth from your history plus assumptions you set |
-| Fund | Calculator for a savings fund (e.g. for a child): contributions, interest, tax, target, optionally starting from a real account balance |
+| Fund | A child's part of your Trade Republic account: his share of each real interest payment (already net of tax) is credited to him and compounds, with a projection |
 
 Everything is computed locally. Internal transfers between your own accounts are excluded from spending and income, and so are reimbursement pairs: a payment and a receipt of the same amount (within 1%, up to 60 days apart) cancel out. Every pair is listed in the Spending tab, with a button to reject a wrong match.
 

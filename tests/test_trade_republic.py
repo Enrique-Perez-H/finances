@@ -142,7 +142,7 @@ class FlowTests(IsolatedHome):
         snap = c.fetch(user_input="1")
         self.assertEqual([(t["amount"], t["category"]) for t in snap.transactions],
                          [(9.5, "Interest & dividends")])
-        self.assertTrue(secrets["tr_history_done"])
+        self.assertEqual(secrets["tr_history_version"], 2)
         self.assertEqual(snap.notes, [])
 
     def test_history_failure_keeps_balances_and_says_so(self):
@@ -155,7 +155,7 @@ class FlowTests(IsolatedHome):
         self.assertEqual(len(snap.accounts), 2)
         self.assertEqual(snap.transactions, [])
         self.assertIn("history could not be read", snap.notes[0])
-        self.assertNotIn("tr_history_done", secrets)
+        self.assertNotIn("tr_history_version", secrets)
 
     def test_through_sync_layer_and_encrypted_persistence(self):
         saved = []

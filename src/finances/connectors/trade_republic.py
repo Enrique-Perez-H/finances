@@ -50,6 +50,7 @@ def _load_pytr():
 
 
 TIMELINE_PAGES_FIRST, TIMELINE_PAGES_LATER = 40, 4
+HISTORY_VERSION = 2  # bump to make the next sync re-read the whole history
 TIMELINE_DAYS_LATER = 60
 
 # Event types whose meaning does not depend on the shop: their category is set here.
@@ -92,6 +93,8 @@ def map_timeline_item(item: dict) -> dict | None:
     elif etype in _ATM:
         hint = "Cash withdrawals"
     text = " ".join(p for p in (item.get("title"), item.get("subtitle")) if p) or etype
+    if etype in _INTEREST and amount > 0:
+        text = f"TR interest {text}"  # lets the fund tell interest on cash from dividends
     tx = dict(id=f"tr-{item['id']}", account_id=CASH_ID, date=str(item["timestamp"])[:10],
               amount=float(amount), description=text[:140], category="uncategorized")
     if hint:
@@ -204,7 +207,7 @@ class TradeRepublicConnector(Connector):
         tr = self.tr
         self.tr = None  # next sync starts from the saved session
         pf = Portfolio(tr)
-        first = not self.secrets.get("tr_history_done")
+        first = self.secrets.get("tr_history_version") != HISTORY_VERSION
         since = "1970-01-01" if first else (
             datetime.now(timezone.utc) - timedelta(days=TIMELINE_DAYS_LATER)).date().isoformat()
         pages = TIMELINE_PAGES_FIRST if first else TIMELINE_PAGES_LATER
@@ -225,5 +228,5 @@ class TradeRepublicConnector(Connector):
             snap.notes.append(f"Trade Republic history could not be read ({result['error']}); "
                               "balances are fine.")
         else:
-            self.secrets["tr_history_done"] = True
+            self.secrets["tr_history_version"] = HISTORY_VERSION
         return snap

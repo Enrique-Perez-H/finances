@@ -23,6 +23,22 @@ CREATE TABLE IF NOT EXISTS transactions (
     category TEXT NOT NULL DEFAULT 'uncategorized'
 );
 CREATE INDEX IF NOT EXISTS tx_date ON transactions(date);
+CREATE TABLE IF NOT EXISTS son_fund (
+    id INTEGER PRIMARY KEY CHECK (id = 1),   -- a single fund
+    name TEXT NOT NULL,
+    account_id TEXT NOT NULL,      -- the account whose interest is shared
+    start_date TEXT NOT NULL,      -- from when the starting amount is his
+    initial REAL NOT NULL DEFAULT 0,
+    monthly REAL NOT NULL DEFAULT 0,         -- planned extra deposits, projection only
+    annual_rate REAL,              -- projection rate in %, NULL = estimate from real payments
+    years INTEGER NOT NULL DEFAULT 18        -- how far to project
+);
+CREATE TABLE IF NOT EXISTS son_deposits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    amount REAL NOT NULL,
+    note TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS balance_history (
     day TEXT NOT NULL,             -- ISO date of the sync that recorded it
     account_id TEXT NOT NULL,
