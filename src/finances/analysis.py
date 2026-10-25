@@ -126,3 +126,34 @@ def transactions(db: Database, category: str | None, month: str | None, limit: i
         t["key"] = merchant_key(t["description"]) or normalize(t["description"])
         t["pattern"] = suggest_pattern(t["key"], t["description"])
     return out
+
+
+def entries(db: Database, category: str | None = None, since: str | None = None,
+            until: str | None = None, q: str | None = None, sort: str = "date",
+            offset: int = 0, limit: int = 50) -> dict:
+    """Browse entries: filter by category (None or '*' = all), dates, and text (accent-insensitive).
+    Reimbursement pairs are left out, they have their own list."""
+    sql, args = ("SELECT id, date, amount, description, category, cat_source FROM transactions"
+                 " WHERE paired_with = ''"), []
+    if category and category != "*":
+        sql += " AND category=?"
+        args.append(category)
+    if since:
+        sql += " AND date >= ?"
+        args.append(since)
+    if until:
+        sql += " AND date <= ?"
+        args.append(until)
+    sql += " ORDER BY " + ("ABS(amount) DESC, date DESC" if sort == "amount" else "date DESC") + ", id"
+    needle = normalize(q or "")
+    rows = [dict(r) for r in db.conn.execute(sql, args)
+            if not needle or needle in normalize(r["description"])]
+    total_in = round(sum(r["amount"] for r in rows if r["amount"] > 0), 2)
+    total_out = round(-sum(r["amount"] for r in rows if r["amount"] < 0), 2)
+    limit = max(1, min(limit, 200))
+    page = rows[max(offset, 0):max(offset, 0) + limit]
+    for t in page:  # how a rule for this entry would be worded ("move all like this")
+        t["key"] = merchant_key(t["description"]) or normalize(t["description"])
+        t["pattern"] = suggest_pattern(t["key"], t["description"])
+    return dict(items=page, count=len(rows), total_in=total_in, total_out=total_out,
+                has_more=max(offset, 0) + limit < len(rows))

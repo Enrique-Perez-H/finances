@@ -1,10 +1,11 @@
 import {card, row, el, eur, get, post, note, barRow} from '../ui.js';
+import {toolsCard} from './tools.js';
 
 const LABELS = {cash: 'Cash', savings: 'Savings', investment: 'Investments'};
 let showAll = false;
 
 export async function render(root) {
-  const d = await get('/api/evolution?months=600');
+  const [d, cats, rules] = await Promise.all([get('/api/evolution?months=600'), get('/api/categories'), get('/api/rules')]);
   const reload = () => render(root);
   if (!d.rows.length) {
     root.replaceChildren(card('Accounts', note('Nothing to show yet. Sync first.')));
@@ -37,5 +38,5 @@ export async function render(root) {
       return el('div', {className: 'review'}, row(a.name, eur(a.balance)), sel);
     }));
 
-  root.replaceChildren(types, interest, table);
+  root.replaceChildren(types, interest, table, toolsCard(cats, rules, reload));
 }

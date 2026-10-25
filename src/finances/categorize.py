@@ -405,6 +405,22 @@ def set_manual(db: Database, tx_id: str, category: str) -> None:
         raise ValueError("unknown transaction")
 
 
+def set_manual_many(db: Database, tx_ids: list[str], category: str) -> int:
+    """Move several entries by hand at once (your choice, never overwritten by rules)."""
+    category = category.strip()
+    if not category or len(category) > 40:
+        raise ValueError("choose a category (up to 40 characters)")
+    if category == UNCATEGORIZED:
+        raise ValueError("'uncategorized' cannot be chosen")
+    if not tx_ids or len(tx_ids) > 500:
+        raise ValueError("select between 1 and 500 entries")
+    marks = ",".join("?" * len(tx_ids))
+    cur = db.conn.execute(
+        f"UPDATE transactions SET category=?, cat_source='manual' WHERE id IN ({marks})",
+        (category, *tx_ids))
+    return cur.rowcount
+
+
 def all_categories(db: Database) -> list[str]:
     used = {r[0] for r in db.conn.execute("SELECT DISTINCT category FROM transactions")}
     used |= {r[0] for r in db.conn.execute("SELECT DISTINCT category FROM rules")}

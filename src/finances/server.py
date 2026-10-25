@@ -55,6 +55,9 @@ GET_ROUTES = {
     "/api/spending/average": lambda db, q: analysis.average_month(
         db, int(_num(q, "months", 12)) or None),
     "/api/spending": lambda db, q: analysis.spending(db, _q(q, "month")),
+    "/api/entries": lambda db, q: analysis.entries(
+        db, _q(q, "category"), _q(q, "since"), _q(q, "until"), _q(q, "q"), _q(q, "sort", "date"),
+        int(_num(q, "offset", 0)), int(_num(q, "limit", 50))),
     "/api/transactions": lambda db, q: analysis.transactions(
         db, _q(q, "category"), _q(q, "month"), int(_num(q, "limit", 200))),
     "/api/income": lambda db, q: income.summary(db, int(_num(q, "months", 12))),
@@ -87,6 +90,15 @@ def _post_categorize(db, body):
                                       str(body.get("direction", "any")))
     db.save()
     return {"changed": changed}
+
+
+def _post_categorize_bulk(db, body):
+    ids = body.get("tx_ids")
+    if not isinstance(ids, list):
+        raise ValueError("tx_ids must be a list")
+    moved = categorize.set_manual_many(db, [str(i) for i in ids], str(body.get("category", "")))
+    db.save()
+    return {"moved": moved}
 
 
 def _post_merge_category(db, body):
@@ -132,6 +144,7 @@ POST_ROUTES = {
     "/api/funds/delete": _post_fund_delete,
     "/api/funds/preview": lambda db, body: fund.preview(db, body),
     "/api/categorize": _post_categorize,
+    "/api/categorize/bulk": _post_categorize_bulk,
     "/api/rules/delete": _post_delete_rule,
     "/api/pairs/block": _post_block_pair,
     "/api/categories/merge": _post_merge_category,

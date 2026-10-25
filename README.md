@@ -28,7 +28,7 @@ python -m unittest discover -s tests
 | Tab | What it does |
 |---|---|
 | Overview | Your total and its evolution per type, plus income versus spending per month (chart and table with averages), with range buttons (6m, 12m, 2y, since start); tap or drag a chart to read a month |
-| Spending | Spending per category per month, plus an average month (3m, 6m, 12m or all). Entries it cannot classify are put to you in a review queue; each answer becomes a rule applied to past and future entries. You can also fix single entries. |
+| Spending | Spending per category per month, plus an average month (3m, 6m, 12m or all). Entries it cannot classify are put to you in a review queue; each answer becomes a rule applied to past and future entries. You can also fix single entries. A browser lists every entry by category and period (search, sort, move one, several or a whole shop). |
 | Accounts | How each account counts (cash, savings, investment), interest and dividends received per month, month-by-month table |
 | Income | What you receive: salary, transfers, interest, by type, source and month |
 | Recurring | Detected recurring costs and income, monthly and yearly totals, what is coming up |

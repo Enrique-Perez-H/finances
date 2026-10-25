@@ -1,21 +1,22 @@
-import {card, row, el, eur, eur2, pct, get, post, note, button, barRow, categoryInput, categoryPicker} from '../ui.js';
+import {card, row, el, eur, eur2, pct, get, post, note, button, barRow, categoryPicker} from '../ui.js';
+import {browserCard, browse} from './browser.js';
 
 const QUICK = ['Internal transfer', 'Groceries', 'Restaurants & bars', 'Transport', 'Shopping',
   'Subscriptions', 'Utilities & telecom', 'Health', 'Home & furniture', 'Leisure', 'Other'];
 let month = null;
+let scrollToBrowser = false;
 let avgMonths = (() => { try { return Number(localStorage.getItem('avgMonths') ?? 12); } catch (e) { return 12; } })();
-let openCategory = null;
 
 export async function render(root) {
-  const [s, review, cats, rules, generic, pairs, avg] = await Promise.all([
+  const [s, review, cats, generic, pairs, avg] = await Promise.all([
     get('/api/spending' + (month ? `?month=${month}` : '')), get('/api/review'),
-    get('/api/categories'), get('/api/rules'), get('/api/review/generic'), get('/api/pairs'),
+    get('/api/categories'), get('/api/review/generic'), get('/api/pairs'),
     get(`/api/spending/average?months=${avgMonths}`)]);
   month = s.month;
   const reload = () => render(root);
 
   const picker = el('select', {}, ...s.months.map(m => el('option', {value: m, textContent: m, selected: m === month})));
-  picker.addEventListener('change', () => { month = picker.value; openCategory = null; reload(); });
+  picker.addEventListener('change', () => { month = picker.value; reload(); });
   const delta = s.previous_month ? s.total - s.previous_total : null;
 
   const parts = [card('Spending',
@@ -29,15 +30,23 @@ export async function render(root) {
 
   const max = s.categories.length ? s.categories[0].total : 0;
   parts.push(card('By category', ...s.categories.map(c =>
-    barRow(c.category, c.total, max, `${eur(c.total)} · ${pct(c.share)}`,
-      () => { openCategory = openCategory === c.category ? null : c.category; reload(); })),
-    note('Tap a category to see its shops and move them to another category.')));
+    barRow(c.category, c.total, max, `${eur(c.total)} · ${pct(c.share)}`, () => {
+      browse.category = c.category;
+      browse.period = 'month';
+      browse.q = '';
+      scrollToBrowser = true;
+      reload();
+    })),
+    note('Tap a category to browse its entries below.')));
 
-  if (openCategory) parts.push(await entriesCard(openCategory, month, cats, reload));
+  const browser = browserCard(cats, s.months, month);
+  parts.push(browser);
   if (pairs.count) parts.push(pairsCard(pairs, reload));
-  parts.push(rulesCard(rules, reload));
-  parts.push(categoriesCard(cats, reload));
   root.replaceChildren(...parts);
+  if (scrollToBrowser) {
+    scrollToBrowser = false;
+    browser.scrollIntoView({behavior: 'smooth', block: 'start'});
+  }
 }
 
 function reviewCard(review, cats, reload, unclear) {
@@ -76,37 +85,6 @@ function genericCard(generic, cats, reload) {
 
 // Entries of one category and month, grouped by shop. Move a whole shop (a rule for the
 // future too) or a single entry.
-async function entriesCard(category, month, cats, reload) {
-  const txs = await get(`/api/transactions?category=${encodeURIComponent(category)}&month=${month}`);
-  const groups = new Map();
-  for (const t of txs) {
-    const g = groups.get(t.key) ?? {key: t.key, pattern: t.pattern, label: t.description, total: 0, items: []};
-    g.total += t.amount;
-    g.items.push(t);
-    groups.set(t.key, g);
-  }
-  const others = cats.filter(c => c !== category);
-  const list = [...groups.values()].sort((a, b) => a.total - b.total).map(g => {
-    const pattern = el('input', {value: g.pattern, className: 'wide'});
-    const direction = g.items.every(t => t.amount < 0) ? 'out' : g.items.every(t => t.amount > 0) ? 'in' : 'any';
-    const moveAll = categoryPicker(others, async c => {
-      try {
-        await post('/api/categorize', {pattern: pattern.value, category: c, direction});
-        reload();
-      } catch (e) { alert(e.message); }
-    }, {placeholder: `Move all "${g.pattern}" to…`});
-    const entries = g.items.map(t => el('div', {className: 'review'},
-      row(t.description.slice(0, 40), eur2(t.amount), t.amount < 0 ? 'neg' : 'pos'),
-      el('div', {className: 'muted', textContent: `${t.date} · move this entry only:`}),
-      categoryPicker(others, async c => { await post('/api/categorize', {tx_id: t.id, category: c}); reload(); },
-        {placeholder: 'Move to…'})));
-    return el('details', {className: 'group'},
-      el('summary', {}, el('span', {textContent: `${g.label.slice(0, 30)} ×${g.items.length}`}),
-        el('span', {textContent: eur2(g.total)})),
-      el('div', {className: 'muted', textContent: 'Rule for entries containing:'}), pattern, moveAll, ...entries);
-  });
-  return card(`${category} · ${month}`, ...list);
-}
 
 function pairsCard(pairs, reload) {
   const items = pairs.pairs.map(p => el('div', {className: 'pair'},
@@ -117,31 +95,6 @@ function pairsCard(pairs, reload) {
     el('summary', {textContent: `Reimbursements left out of the totals (${pairs.count} pairs, ${eur(pairs.spent)})`}),
     note('A payment and a receipt of the same amount (within 1%, up to 60 days apart) cancel out. If one is wrong, tap "Not a pair".'),
     ...items);
-}
-
-function rulesCard(rules, reload) {
-  if (!rules.length) return card('Your rules', note('None yet. They appear as you answer the review questions.'));
-  const dir = {in: 'money in', out: 'money out', any: 'in or out'};
-  return card('Your rules', note('A rule applies to every entry whose text contains its words. Delete any that match too much.'),
-    ...rules.map(r => el('div', {className: 'row'},
-      el('span', {textContent: `"${r.pattern}" (${dir[r.direction] ?? r.direction}) → ${r.category}${r.ignored ? '  ⚠ ignored: too generic' : ''}`}),
-      button('✕', async () => { await post('/api/rules/delete', {pattern: r.pattern, direction: r.direction}); reload(); }, 'ghost'))));
-}
-
-function categoriesCard(cats, reload) {
-  const from = el('select', {className: 'picker'}, ...cats.map(c => el('option', {value: c, textContent: c})));
-  const to = categoryInput(cats);
-  const go = button('Merge / rename', async () => {
-    const dst = to.input.value.trim();
-    if (!dst || dst === from.value) return;
-    if (!confirm(`Move everything in "${from.value}" to "${dst}", now and in future syncs?`)) return;
-    await post('/api/categories/merge', {src: from.value, dst});
-    reload();
-  });
-  return card('Categories',
-    note('Merge a category into another, or rename it by typing a new name. It applies to all entries and to future syncs.'),
-    el('div', {className: 'muted', textContent: 'Move everything in:'}), from,
-    el('div', {className: 'muted', textContent: 'into (existing or new name):'}), to.wrap, go);
 }
 
 // A typical month: average per category over the last completed months.

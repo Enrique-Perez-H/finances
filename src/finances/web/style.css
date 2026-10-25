@@ -58,3 +58,11 @@ table.months th{color:var(--muted);font-weight:500;text-align:right;padding:4px 
 table.months th:first-child,table.months td:first-child{text-align:left}
 table.months td{text-align:right;padding:5px 0;border-top:1px solid color-mix(in srgb,var(--muted) 25%,transparent);white-space:nowrap}
 table.months tr.avg td{font-weight:600}
+
+.filters{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px}
+.filters select{width:100%}
+.entry{border-top:1px solid color-mix(in srgb,var(--muted) 30%,transparent);padding:8px 0}
+.entry .desc{font-size:.9rem;overflow-wrap:anywhere;margin:2px 0}
+.entry select{margin-top:4px}
+.bulk{position:sticky;top:0;z-index:2;background:var(--card);border:1px solid var(--accent);border-radius:8px;padding:8px;margin:8px 0}
+input[type=checkbox]{width:18px;height:18px;vertical-align:middle}
