@@ -40,7 +40,7 @@ export async function render(root) {
     return entry[1] ? rows.slice(-entry[1]) : rows;
   };
 
-  // Biggest single spends and incomes of the month selected on the evolution chart.
+  // Biggest single spends and incomes of the month selected on the income and spending chart.
   let topToken = 0;
   const topCard = card('Top 3');
   const topBox = el('div', {className: 'top'});
@@ -58,7 +58,7 @@ export async function render(root) {
         note(`${t.date} · ${t.category}`))) : [note('None')]));
     topCard.querySelector('h2').textContent = `Top 3 in ${month}`;
     topBox.replaceChildren(list('Biggest spends', top.spends, 'neg'), list('Biggest incomes', top.incomes, 'pos'),
-      note('Tap a month on either chart to change it.'));
+      note('Tap a month on the income and spending chart to change it.'));
   };
 
   const drawEvolution = () => {
@@ -69,8 +69,7 @@ export async function render(root) {
     const points = Math.max(...series.map(s => s.values.filter(v => v !== null).length));
     evolutionCard.replaceChildren(el('h2', {textContent: 'Evolution'}), buttons(),
       points >= 2 ? lineChart(series, rows.map(r => r.month), {
-        notes: rows.map(r => r.partial ? 'Total leaves out accounts with no data for this month.' : ''),
-        onSelect: i => showTop(rows[i].month)}) : null,
+        notes: rows.map(r => r.partial ? 'Total leaves out accounts with no data for this month.' : '')}) : null,
       legend(series),
       note(points >= 2
         ? 'Tap or drag on the chart to read a month. The total is the sum of the lines that have data; early months leave out investments, which start when you first synced.'
