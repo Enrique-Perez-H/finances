@@ -42,7 +42,9 @@ export async function render(root) {
 
   // Biggest single spends and incomes of the month selected on the evolution chart.
   let topToken = 0;
+  const topCard = card('Top 3');
   const topBox = el('div', {className: 'top'});
+  topCard.append(topBox);
   const showTop = async month => {
     const token = ++topToken;
     let top;
@@ -54,8 +56,9 @@ export async function render(root) {
         el('div', {className: 'row'}, el('span', {textContent: t.description.slice(0, 34)}),
           el('span', {className: cls, textContent: eur2(t.amount)})),
         note(`${t.date} · ${t.category}`))) : [note('None')]));
-    topBox.replaceChildren(el('strong', {textContent: `Top 3 in ${month}`}),
-      list('Biggest spends', top.spends, 'neg'), list('Biggest incomes', top.incomes, 'pos'));
+    topCard.querySelector('h2').textContent = `Top 3 in ${month}`;
+    topBox.replaceChildren(list('Biggest spends', top.spends, 'neg'), list('Biggest incomes', top.incomes, 'pos'),
+      note('Tap a month on either chart to change it.'));
   };
 
   const drawEvolution = () => {
@@ -68,7 +71,6 @@ export async function render(root) {
       points >= 2 ? lineChart(series, rows.map(r => r.month), {
         notes: rows.map(r => r.partial ? 'Total leaves out accounts with no data for this month.' : ''),
         onSelect: i => showTop(rows[i].month)}) : null,
-      points >= 2 ? topBox : null,
       legend(series),
       note(points >= 2
         ? 'Tap or drag on the chart to read a month. The total is the sum of the lines that have data; early months leave out investments, which start when you first synced.'
@@ -100,8 +102,9 @@ export async function render(root) {
         el('td', {textContent: `${avg('saved') >= 0 ? '+' : ''}${eur(avg('saved'))}`})) : null);
     const rate = sum('income') > 0 ? Math.round((sum('saved') / sum('income')) * 100) : null;
     flowCard.replaceChildren(el('h2', {textContent: 'Income and spending per month'}), buttons(),
-      barChart(series, rows.map(r => r.month),
-        {notes: rows.map(r => r.partial ? 'Month in progress: not final yet.' : '')}),
+      barChart(series, rows.map(r => r.month), {
+        notes: rows.map(r => r.partial ? 'Month in progress: not final yet.' : ''),
+        onSelect: i => showTop(rows[i].month)}),
       legend(series),
       done.length ? row('Average month', `${eur(avg('income'))} in · ${eur(avg('spending'))} out`) : null,
       rate === null ? null : row('Saved over this period', `${rate}% of income`, rate >= 0 ? 'pos' : 'neg'),
@@ -111,5 +114,5 @@ export async function render(root) {
 
   const draw = () => { drawEvolution(); drawFlow(); };
   draw();
-  root.replaceChildren(total, evolutionCard, flowCard);
+  root.replaceChildren(total, evolutionCard, flowCard, topCard);
 }

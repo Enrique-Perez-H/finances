@@ -161,7 +161,7 @@ export function categoryPicker(categories, onChoose, {current = '', placeholder 
 }
 
 // Grouped bars per label with a y axis. series = [{label, values, color}]. Tap a month to read it.
-export function barChart(series, labels = [], {format = eur, notes = []} = {}) {
+export function barChart(series, labels = [], {format = eur, notes = [], onSelect = null} = {}) {
   const W = 340, H = 160, L = 46, R = 8, T = 8, B = 20;
   const n = labels.length || 1;
   const maxV = Math.max(...series.flatMap(s => s.values), 1);
@@ -195,6 +195,7 @@ export function barChart(series, labels = [], {format = eur, notes = []} = {}) {
     readout.replaceChildren(el('strong', {textContent: labels[i]}),
       ...series.map(s => el('span', {}, el('i', {className: 'sw', style: `background:${s.color}`}), `${s.label}: ${format(s.values[i])}`)),
       ...(notes[i] ? [el('em', {className: 'warn', textContent: notes[i]})] : []));
+    if (onSelect) onSelect(i);
   };
   const pick = ev => {
     const rect = svg.getBoundingClientRect();
