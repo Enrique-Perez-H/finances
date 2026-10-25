@@ -200,7 +200,12 @@ def merchant_key(text: str) -> str:
 
 
 def is_generic(key: str) -> bool:
-    return key in GENERIC_KEYS
+    """True when no rule could safely be made from this text: it names no shop or person
+    (empty, a bare operation word like 'recibo', or only codes). Such entries are asked one by one."""
+    words = key.split()
+    return (key in GENERIC_KEYS or key in GENERIC_PATTERNS or len(key.strip()) < 2
+            or all(w in GENERIC_PATTERNS or w in _NOISE or any(c.isdigit() for c in w) or set(w) <= {"x"}
+                   for w in words))
 
 
 def suggest_pattern(key: str, text: str = "") -> str:

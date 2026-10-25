@@ -179,6 +179,23 @@ class RobustRulesTests(IsolatedHome):
                          {("martin jimenez", "in"), ("martin jimenez", "out")})
         self.assertEqual({g["pattern"] for g in queue}, {"martin jimenez"})
 
+    def test_entries_with_only_an_operation_word_are_never_stuck(self):
+        for i, text in enumerate(("RECIBO", "PAGO", "COMPRA TARJETA", "5540XXXX 4471", "TRANSFERENCIA", "BIZUM")):
+            self.add(str(i), text, -10 - i)
+        self.assertEqual(categorize.review_queue(self.db), [])  # no impossible rule is suggested
+        g = categorize.generic_entries(self.db)
+        self.assertEqual(g["total"], 6)
+        categorize.set_manual(self.db, "0", "Other")           # one-by-one always works
+        self.assertEqual(categorize.generic_entries(self.db)["total"], 5)
+
+    def test_real_names_are_still_grouped_into_rules(self):
+        self.add("1", "RECIBO IBERDROLA CLIENTES", -50)
+        self.add("2", "PAGO MERCADONA", -20)
+        keys = {g["key"] for g in categorize.review_queue(self.db)}
+        self.assertTrue(any("iberdrola" in k for k in keys))
+        self.assertTrue(any("mercadona" in k for k in keys))
+        self.assertEqual(categorize.generic_entries(self.db)["total"], 0)
+
     def test_capital_movements_are_left_out_of_totals(self):
         from finances import analysis
         self.add("1", "INMOBILIARIA compra piso", -231000, categorize.CAPITAL)

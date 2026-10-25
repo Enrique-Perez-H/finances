@@ -2,12 +2,12 @@ import {el, post, get} from './ui.js';
 
 const TABS = [
   ['overview', 'Overview'],
-  ['accounts', 'Accounts'],
   ['spending', 'Spending'],
   ['income', 'Income'],
   ['recurring', 'Recurring'],
   ['forecast', 'Forecast'],
   ['fund', 'Fund'],
+  ['accounts', 'Accounts'],
 ];
 const loaded = {};
 let current = localStorage.getItem('tab') || 'overview';
