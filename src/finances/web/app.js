@@ -54,6 +54,10 @@ async function sync(inputs = {}) {
         parts.push(el('div', {}, ...kids, input, go));
       } else if (v.state === 'needs_input') {
         parts.push(el('div', {textContent: `${name}: ${v.prompt}`}));
+      } else if (v.state === 'skipped') {
+        const retry = el('button', {textContent: 'Try anyway'});
+        retry.addEventListener('click', () => sync({[name]: '!force'}));
+        parts.push(el('div', {}, `${name}: skipped – ${v.note} `, retry));
       } else {
         parts.push(el('div', {textContent: `${name}: ${v.state}${v.error ? ' – ' + v.error : ''}${v.note ? ' – ' + v.note : ''}`}));
       }

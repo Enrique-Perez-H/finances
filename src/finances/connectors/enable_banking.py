@@ -40,6 +40,7 @@ FIRST_SYNC_DAYS, LATER_SYNC_DAYS = 730, 60
 # carries the PSU headers says "the user is present", which banks do not cap this way.
 UNATTENDED_DAILY_BUDGET = 4
 ATTENDED_MIN_INTERVAL = timedelta(minutes=10)
+FORCE = "!force"  # "try anyway": skips our own spacing; the bank may still answer 429
 BALANCE_PREFERENCE = ["CLBD", "ITBD", "OPBD", "CLAV", "ITAV", "XPCD"]
 
 
@@ -242,7 +243,8 @@ class EnableBankingConnector(Connector):
         if self._now() < due:
             minutes = int((due - self._now()).total_seconds() // 60) + 1
             raise Skipped(f"Santander data was fetched recently; the bank limits how often an app "
-                          f"may read it. Next sync possible in about {minutes} min.")
+                          f"may read it. Next sync possible in about {minutes} min. "
+                          "You can try anyway; the bank may still refuse.")
 
     # --- data -------------------------------------------------------------
     def _balance(self, uid: str, headers: dict) -> Decimal:
@@ -275,14 +277,15 @@ class EnableBankingConnector(Connector):
         for k in ("eb_app_id", "eb_private_key"):
             if not self.secrets.get(k):
                 raise RuntimeError(f"Missing {k}: run `finances secret {k}`")
-        if user_input:
+        force = user_input == FORCE
+        if user_input and not force:
             self._create_session(user_input)
         if not self._session_alive():
             self._start_authorization()  # raises NeedsInput
 
         session = self.secrets["eb_session"]
         headers = self._psu_headers(session)
-        if not user_input:  # right after approving there is nothing recent to protect
+        if not user_input:  # right after approving, or when you insist, nothing is held back
             self._check_budget(session, attended=bool(headers))
         days = LATER_SYNC_DAYS if session.get("initial_done") else FIRST_SYNC_DAYS
         date_from = (self._now() - timedelta(days=days)).date().isoformat()

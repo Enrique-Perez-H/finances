@@ -253,6 +253,21 @@ class ConnectorTests(unittest.TestCase):
         secrets["eb_last_fetch"] = (NOW - timedelta(hours=25)).isoformat()
         c.fetch()  # one account => 2 calls per sync => allowed again well within a day
 
+    def test_try_anyway_skips_our_spacing_but_not_bank_errors(self):
+        from finances.connectors.base import ConnectorError, Skipped
+        c, secrets, bank = self.connected([], psu=False)
+        with self.assertRaises(Skipped):
+            c.fetch()
+        snap = c.fetch(user_input="!force")  # not mistaken for an approval code
+        self.assertTrue(snap.accounts)
+        self.assertEqual(secrets["eb_session"]["session_id"], "s1")
+
+        def limited(method, path, body=None, params=None, headers=None):
+            raise EnableBankingError(429, "limit")
+        c._http = limited
+        with self.assertRaises(ConnectorError):
+            c.fetch(user_input="!force")
+
     def test_attended_syncs_only_wait_minutes(self):
         from finances.connectors.base import Skipped
         c, secrets, bank = self.connected(["Psu-Ip-Address"])
