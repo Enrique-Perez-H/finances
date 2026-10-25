@@ -12,6 +12,11 @@ from .db import Database
 
 UNCATEGORIZED = "uncategorized"
 INTERNAL = "Internal transfer"  # moves between your own accounts: not spending, not income
+CAPITAL = "Property & capital"  # one-off large movements (buying a flat...): not spending either
+EXCLUDED = (INTERNAL, CAPITAL)
+# Words that name a kind of operation, not a counterparty. A rule on them would match thousands.
+GENERIC_PATTERNS = {"transferencia", "transferencias", "transf", "traspaso", "recibo", "pago", "compra",
+                    "bizum", "inmediata", "tarjeta", "abono", "cargo", "concepto", "favor", "ingreso"}
 INCOME_CATEGORIES = ["Salary", "Pension & benefits", "Transfers received", "Interest & dividends",
                      "Refunds", "Other income"]
 EXPENSE_CATEGORIES = [
@@ -164,7 +169,7 @@ def _mcc_ranges():
 
 MCC_CATEGORIES = _mcc_ranges()
 
-_NOISE = {"compra", "tarj", "tarjeta", "con", "pago", "movil", "en", "de", "la", "el", "los",
+_NOISE = {"transferencia", "inmediata", "traspaso", "bizum", "compra", "tarj", "tarjeta", "con", "pago", "movil", "en", "de", "la", "el", "los",
           "recibo", "a", "favor", "concepto", "ref", "referencia", "sepa", "comercio", "del",
           "por", "y", "al", "num", "no"}
 
@@ -198,7 +203,10 @@ def is_generic(key: str) -> bool:
     return key in GENERIC_KEYS
 
 
-def suggest_pattern(key: str) -> str:
+def suggest_pattern(key: str, text: str = "") -> str:
+    """People (transfers, Bizum) need two words ('martin jimenez'); shops are fine with the first."""
+    if set(normalize(text).split()) & {"transferencia", "bizum", "traspaso"}:
+        return key
     first = key.split(" ")[0] if key else ""
     return first if len(first) >= 5 else key
 
@@ -225,10 +233,21 @@ def _canon(category: str, aliases: dict | None = None) -> str:
     return category
 
 
+def _applies(rule, amount) -> bool:
+    direction = rule[2] if len(rule) > 2 else "any"
+    return direction == "any" or (direction == "out") == (amount < 0)
+
+
 def _classify(text, amount, user_rules, mcc):
     norm = normalize(text)
-    for pattern, category in sorted(user_rules, key=lambda r: -len(r[0])):
+    for rule in sorted(user_rules, key=lambda r: -len(r[0])):
+        pattern, category = rule[0], rule[1]
+        if pattern in GENERIC_PATTERNS or not _applies(rule, amount):
+            continue
         if _matcher(pattern).search(norm):
+            if amount > 0 and category not in INCOME_CATEGORIES and category not in EXCLUDED \
+                    and rule[2:3] != ("in",):
+                category = "Refunds"  # money coming in under a spending category is a refund
             return category, "user"
     for pattern, cat_out, cat_in in sorted(DEFAULT_RULES, key=lambda r: -len(r[0])):
         if _matcher(pattern).search(norm):
@@ -248,7 +267,7 @@ def _fold(name: str) -> str:
 def aliases(db: Database) -> dict:
     """Your merges, plus automatic ones for near-duplicates of a built-in name
     (different capitals or a trailing 's': 'other' -> 'Other', 'Insurances' -> 'Insurance')."""
-    builtin = EXPENSE_CATEGORIES + INCOME_CATEGORIES + [INTERNAL]
+    builtin = EXPENSE_CATEGORIES + INCOME_CATEGORIES + list(EXCLUDED)
     folded = {_fold(c): c for c in builtin}
     used = {r[0] for r in db.conn.execute("SELECT DISTINCT category FROM transactions")}
     used |= {r[0] for r in db.conn.execute("SELECT DISTINCT category FROM rules")}
@@ -286,7 +305,8 @@ def merge_category(db: Database, src: str, dst: str) -> int:
 def categorize_all(db: Database) -> int:
     """(Re)classify every entry not set by hand or by its connector. Returns how many changed."""
     apply_aliases(db)
-    user_rules = [(r["pattern"], r["category"]) for r in db.conn.execute("SELECT * FROM rules")]
+    user_rules = [(r["pattern"], r["category"], r["direction"])
+                  for r in db.conn.execute("SELECT pattern, category, direction FROM rules")]
     alias_map = aliases(db)
     changed = 0
     rows = db.conn.execute(
@@ -308,14 +328,15 @@ def review_queue(db: Database, limit: int = 30) -> list[dict]:
     for r in db.conn.execute(
             "SELECT description, amount, date FROM transactions WHERE category=? AND paired_with='' ORDER BY date",
             (UNCATEGORIZED,)):
-        g = groups[merchant_key(r["description"]) or normalize(r["description"])]
+        direction = "in" if r["amount"] > 0 else "out"  # same shop paid and refunded are two questions
+        g = groups[(merchant_key(r["description"]) or normalize(r["description"]), direction)]
         g["count"] += 1
         g["total"] += r["amount"]
         g["sample"] = r["description"]
         g["last"] = r["date"]
-    out = [dict(key=k, pattern=suggest_pattern(k), count=g["count"], total=round(g["total"], 2),
-                sample=g["sample"], last=g["last"], generic=False)
-           for k, g in groups.items() if not is_generic(k)]
+    out = [dict(key=k, pattern=suggest_pattern(k, g["sample"]), direction=d, count=g["count"],
+                total=round(g["total"], 2), sample=g["sample"], last=g["last"], generic=False)
+           for (k, d), g in groups.items() if not is_generic(k)]
     out.sort(key=lambda g: -abs(g["total"]))
     return out[:limit]
 
@@ -329,18 +350,29 @@ def generic_entries(db: Database, limit: int = 15) -> dict:
     return dict(total=len(rows), entries=[dict(r) for r in rows[:limit]])
 
 
-def add_rule(db: Database, pattern: str, category: str) -> int:
+def add_rule(db: Database, pattern: str, category: str, direction: str = "any") -> int:
     pattern = normalize(pattern)
     if len(pattern) < 2 or not category.strip():
         raise ValueError("pattern and category are required")
-    db.conn.execute("INSERT INTO rules(pattern, category) VALUES(?,?)"
-                    " ON CONFLICT(pattern) DO UPDATE SET category=excluded.category",
-                    (pattern, category.strip()))
+    if pattern in GENERIC_PATTERNS:
+        raise ValueError(f'"{pattern}" is too generic: it would match every such operation. '
+                         "Use the name of the shop or person instead.")
+    if direction not in ("any", "in", "out"):
+        raise ValueError("direction must be any, in or out")
+    category = category.strip()
+    if category in EXCLUDED:
+        direction = "any"  # a move between your accounts is one whichever way it goes
+    db.conn.execute("INSERT INTO rules(pattern, direction, category) VALUES(?,?,?)"
+                    " ON CONFLICT(pattern, direction) DO UPDATE SET category=excluded.category",
+                    (pattern, direction, category))
     return categorize_all(db)
 
 
-def delete_rule(db: Database, pattern: str) -> int:
-    db.conn.execute("DELETE FROM rules WHERE pattern=?", (normalize(pattern),))
+def delete_rule(db: Database, pattern: str, direction: str | None = None) -> int:
+    if direction:
+        db.conn.execute("DELETE FROM rules WHERE pattern=? AND direction=?", (normalize(pattern), direction))
+    else:
+        db.conn.execute("DELETE FROM rules WHERE pattern=?", (normalize(pattern),))
     return categorize_all(db)
 
 
@@ -354,7 +386,7 @@ def set_manual(db: Database, tx_id: str, category: str) -> None:
 def all_categories(db: Database) -> list[str]:
     used = {r[0] for r in db.conn.execute("SELECT DISTINCT category FROM transactions")}
     used |= {r[0] for r in db.conn.execute("SELECT DISTINCT category FROM rules")}
-    base = EXPENSE_CATEGORIES + INCOME_CATEGORIES + [INTERNAL]
+    base = EXPENSE_CATEGORIES + INCOME_CATEGORIES + list(EXCLUDED)
     merged_away = set(LEGACY_ALIASES) | set(aliases(db))
     return base + sorted(c for c in used if c not in base and c != UNCATEGORIZED
                          and c not in merged_away)

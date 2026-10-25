@@ -19,7 +19,8 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8765)
     fd = sub.add_parser("find", help="search your entries by text (shown only in your terminal)")
     fd.add_argument("text")
-    sub.add_parser("rules", help="list your own category rules")
+    rl = sub.add_parser("rules", help="list your own category rules (or delete one)")
+    rl.add_argument("--delete", metavar="PATTERN")
     sub.add_parser("oddities", help="entries whose category does not fit their sign or size")
     mg = sub.add_parser("merge", help="merge a category into another (also renames)")
     mg.add_argument("src")
@@ -110,9 +111,15 @@ def _run(args):
         return 0
 
     if args.cmd == "rules":
+        from . import categorize
         db = Database(passphrase)
-        for r in db.conn.execute("SELECT pattern, category FROM rules ORDER BY category, pattern"):
-            print(f"{r['category']:<24} <- \"{r['pattern']}\"")
+        if args.delete:
+            print(f"{categorize.delete_rule(db, args.delete)} entries changed.")
+            db.save()
+            return 0
+        for r in db.conn.execute("SELECT pattern, direction, category FROM rules ORDER BY category, pattern"):
+            flag = "  (ignored: too generic)" if r["pattern"] in categorize.GENERIC_PATTERNS else ""
+            print(f"{r['category']:<24} <- \"{r['pattern']}\" [{r['direction']}]{flag}")
         return 0
     if args.cmd == "merge":
         from . import categorize

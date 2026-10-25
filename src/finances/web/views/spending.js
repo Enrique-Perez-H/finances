@@ -41,13 +41,15 @@ function reviewCard(review, cats, reload, unclear) {
   const items = review.slice(0, 12).map(g => {
     const pattern = el('input', {value: g.pattern, className: 'wide'});
     const choose = async category => {
-      await post('/api/categorize', {pattern: pattern.value, category});
-      reload();
+      try {
+        await post('/api/categorize', {pattern: pattern.value, category, direction: g.direction});
+        reload();
+      } catch (e) { alert(e.message); }
     };
     const chips = el('div', {className: 'chips'}, ...QUICK.map(c => button(c, () => choose(c), 'chip')));
     return el('div', {className: 'review'},
-      row(g.sample.slice(0, 40), `${eur2(g.total)} · ×${g.count}`),
-      el('div', {className: 'muted', textContent: 'Entries containing:'}), pattern,
+      row(g.sample.slice(0, 40), `${eur2(g.total)} · ×${g.count}`, g.total < 0 ? 'neg' : 'pos'),
+      el('div', {className: 'muted', textContent: g.direction === 'in' ? 'Money in, entries containing:' : 'Money out, entries containing:'}), pattern,
       el('div', {className: 'muted', textContent: 'are:'}), chips,
       categoryPicker(cats, choose, {placeholder: 'Or pick any category…'}));
   });
@@ -83,9 +85,12 @@ async function entriesCard(category, month, cats, reload) {
   const others = cats.filter(c => c !== category);
   const list = [...groups.values()].sort((a, b) => a.total - b.total).map(g => {
     const pattern = el('input', {value: g.pattern, className: 'wide'});
+    const direction = g.items.every(t => t.amount < 0) ? 'out' : g.items.every(t => t.amount > 0) ? 'in' : 'any';
     const moveAll = categoryPicker(others, async c => {
-      await post('/api/categorize', {pattern: pattern.value, category: c});
-      reload();
+      try {
+        await post('/api/categorize', {pattern: pattern.value, category: c, direction});
+        reload();
+      } catch (e) { alert(e.message); }
     }, {placeholder: `Move all "${g.pattern}" to…`});
     const entries = g.items.map(t => el('div', {className: 'review'},
       row(t.description.slice(0, 40), eur2(t.amount), t.amount < 0 ? 'neg' : 'pos'),
@@ -113,9 +118,11 @@ function pairsCard(pairs, reload) {
 
 function rulesCard(rules, reload) {
   if (!rules.length) return card('Your rules', note('None yet. They appear as you answer the review questions.'));
-  return card('Your rules', ...rules.map(r => el('div', {className: 'row'},
-    el('span', {textContent: `"${r.pattern}" → ${r.category}`}),
-    button('✕', async () => { await post('/api/rules/delete', {pattern: r.pattern}); reload(); }, 'ghost'))));
+  const dir = {in: 'money in', out: 'money out', any: 'in or out'};
+  return card('Your rules', note('A rule applies to every entry whose text contains its words. Delete any that match too much.'),
+    ...rules.map(r => el('div', {className: 'row'},
+      el('span', {textContent: `"${r.pattern}" (${dir[r.direction] ?? r.direction}) → ${r.category}${r.ignored ? '  ⚠ ignored: too generic' : ''}`}),
+      button('✕', async () => { await post('/api/rules/delete', {pattern: r.pattern, direction: r.direction}); reload(); }, 'ghost'))));
 }
 
 function categoriesCard(cats, reload) {

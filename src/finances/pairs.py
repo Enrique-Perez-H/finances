@@ -8,7 +8,7 @@ reject a wrong one. Salary and interest are never treated as reimbursements.
 from bisect import bisect_left
 from datetime import date, timedelta
 
-from .categorize import INTERNAL
+from .categorize import CAPITAL, INTERNAL
 from .db import Database
 
 TOLERANCE = 0.01          # amounts within 1% of the larger one count as equal
@@ -54,7 +54,8 @@ def apply(db: Database) -> int:
     """Recompute all pairs; returns how many entries changed state."""
     rows = [dict(r) for r in db.conn.execute(
         "SELECT id, date, amount, category FROM transactions"
-        " WHERE category != ? AND pair_blocked = 0 AND ABS(amount) >= ?", (INTERNAL, MIN_AMOUNT))]
+        " WHERE category NOT IN (?, ?) AND pair_blocked = 0 AND ABS(amount) >= ?",
+        (INTERNAL, CAPITAL, MIN_AMOUNT))]
     wanted = find_pairs(rows)
     current = {r["id"]: r["paired_with"] for r in db.conn.execute(
         "SELECT id, paired_with FROM transactions WHERE paired_with != ''")}

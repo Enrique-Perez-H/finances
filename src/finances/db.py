@@ -38,8 +38,10 @@ CREATE TABLE IF NOT EXISTS category_aliases (
     dst TEXT NOT NULL              -- where its entries live now
 );
 CREATE TABLE IF NOT EXISTS rules (
-    pattern TEXT PRIMARY KEY,      -- normalized words, matched against transaction text
-    category TEXT NOT NULL
+    pattern TEXT NOT NULL,         -- normalized words, matched against transaction text
+    direction TEXT NOT NULL DEFAULT 'any',   -- 'out' (spending), 'in' (receipts) or 'any'
+    category TEXT NOT NULL,
+    PRIMARY KEY (pattern, direction)
 );
 CREATE TABLE IF NOT EXISTS fund_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,6 +79,13 @@ class Database:
         self._migrate()
 
     def _migrate(self) -> None:
+        if "direction" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(rules)")}:
+            self.conn.executescript("""
+                CREATE TABLE rules_new (pattern TEXT NOT NULL, direction TEXT NOT NULL DEFAULT 'any',
+                                        category TEXT NOT NULL, PRIMARY KEY (pattern, direction));
+                INSERT INTO rules_new(pattern, direction, category) SELECT pattern, 'any', category FROM rules;
+                DROP TABLE rules;
+                ALTER TABLE rules_new RENAME TO rules;""")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(transactions)")}
         if "paired_with" not in cols:  # id of the matching spend/reimbursement, '' if none
             self.conn.execute("ALTER TABLE transactions ADD COLUMN paired_with TEXT NOT NULL DEFAULT ''")

@@ -121,6 +121,81 @@ class SpanishBankDataTests(IsolatedHome):
         self.assertIn("hairdresser", categorize.all_categories(db))
 
 
+class RobustRulesTests(IsolatedHome):
+    def setUp(self):
+        super().setUp()
+        self.db = Database("pw")
+        self.db.upsert_account(dict(id="a", provider="t", name="A", kind="cash", currency="EUR",
+                                    balance=0, updated_at="t"))
+
+    def add(self, id, desc, amount, category="uncategorized"):
+        self.db.upsert_transaction(dict(id=id, account_id="a", date="2026-01-01", amount=amount,
+                                        description=desc, category=category))
+
+    def cat(self, id):
+        return self.db.conn.execute("SELECT category FROM transactions WHERE id=?", (id,)).fetchone()[0]
+
+    def test_generic_words_cannot_become_rules(self):
+        for word in ("transferencia", "Bizum", "recibo", "PAGO"):
+            with self.assertRaises(ValueError):
+                categorize.add_rule(self.db, word, "Housing")
+
+    def test_an_old_generic_rule_is_ignored(self):
+        self.db.conn.execute("INSERT INTO rules(pattern, category) VALUES('transferencia', 'Housing')")
+        self.add("1", "TRANSFERENCIA DE TRADE REPUBLIC BANK GMBH, CONCEPTO retirada", 52000)
+        self.add("2", "TRANSFERENCIA A FAVOR DE JUAN PEREZ", -300)
+        categorize.categorize_all(self.db)
+        self.assertEqual(self.cat("1"), categorize.INTERNAL)      # the built-in rule wins now
+        self.assertEqual(self.cat("2"), categorize.UNCATEGORIZED)  # asked about, not guessed
+
+    def test_direction_aware_rules(self):
+        self.add("out", "SILVIA MARTIN JIMENEZ cena", -40)
+        self.add("in", "SILVIA MARTIN JIMENEZ cena", 40)
+        categorize.add_rule(self.db, "silvia martin", "Restaurants & bars", "out")
+        categorize.add_rule(self.db, "silvia martin", "Transfers received", "in")
+        self.assertEqual((self.cat("out"), self.cat("in")), ("Restaurants & bars", "Transfers received"))
+        categorize.delete_rule(self.db, "silvia martin", "in")
+        self.assertEqual((self.cat("out"), self.cat("in")), ("Restaurants & bars", categorize.UNCATEGORIZED))
+        with self.assertRaises(ValueError):
+            categorize.add_rule(self.db, "silvia", "Other", "sideways")
+
+    def test_internal_transfer_rules_apply_both_ways(self):
+        self.add("o", "A FAVOR DE ENRIQUE PEREZ HEREDIA", -5000)
+        self.add("i", "DE ENRIQUE PEREZ HEREDIA", 5000)
+        categorize.add_rule(self.db, "enrique perez", categorize.INTERNAL, "out")
+        self.assertEqual((self.cat("o"), self.cat("i")), (categorize.INTERNAL, categorize.INTERNAL))
+
+    def test_money_in_under_a_spending_rule_is_a_refund_not_spending_income(self):
+        categorize.add_rule(self.db, "mercadona", "Groceries")  # direction any
+        self.add("1", "MERCADONA devolucion tienda", 12)
+        categorize.categorize_all(self.db)
+        self.assertEqual(self.cat("1"), "Refunds")
+
+    def test_review_splits_by_direction_and_suggests_two_words_for_people(self):
+        self.add("1", "TRANSFERENCIA DE MARTIN JIMENEZ SILVIA, CONCEPTO mensualidad", 562)
+        self.add("2", "TRANSFERENCIA A FAVOR DE MARTIN JIMENEZ SILVIA, CONCEPTO x", -30)
+        queue = categorize.review_queue(self.db)
+        self.assertEqual({(g["key"], g["direction"]) for g in queue},
+                         {("martin jimenez", "in"), ("martin jimenez", "out")})
+        self.assertEqual({g["pattern"] for g in queue}, {"martin jimenez"})
+
+    def test_capital_movements_are_left_out_of_totals(self):
+        from finances import analysis
+        self.add("1", "INMOBILIARIA compra piso", -231000, categorize.CAPITAL)
+        self.add("2", "MERCADONA", -20, "Groceries")
+        self.assertEqual(analysis.monthly_cashflow(self.db)[0]["spending"], 20.0)
+        self.assertIn(categorize.CAPITAL, categorize.all_categories(self.db))
+
+    def test_old_rules_table_is_migrated(self):
+        self.db.conn.executescript("""
+            DROP TABLE rules;
+            CREATE TABLE rules (pattern TEXT PRIMARY KEY, category TEXT NOT NULL);
+            INSERT INTO rules VALUES ('mercadona', 'Groceries');""")
+        self.db._migrate()
+        row = self.db.conn.execute("SELECT pattern, direction, category FROM rules").fetchone()
+        self.assertEqual(tuple(row), ("mercadona", "any", "Groceries"))
+
+
 class CategoryNamesTests(IsolatedHome):
     def setUp(self):
         super().setUp()
@@ -147,7 +222,7 @@ class CategoryNamesTests(IsolatedHome):
         self.add("1", "REPSOL", category="Fuel", source="default")
         self.add("2", "WHATEVER", category="Telecom", source="manual")
         self.add("3", "SOMETHING", category="Sports & leisure", source="connector")
-        self.db.conn.execute("INSERT INTO rules VALUES('xyz', 'Entertainment')")
+        self.db.conn.execute("INSERT INTO rules(pattern, category) VALUES('xyz', 'Entertainment')")
         categorize.categorize_all(self.db)
         self.assertEqual((self.cat("1"), self.cat("2"), self.cat("3")),
                          ("Transport", "Utilities & telecom", "Leisure"))
@@ -156,7 +231,7 @@ class CategoryNamesTests(IsolatedHome):
 
     def test_user_rule_with_an_old_name_lands_in_the_new_one(self):
         self.add("1", "PAGO XYZ SL")
-        self.db.conn.execute("INSERT INTO rules VALUES('xyz', 'Fuel')")
+        self.db.conn.execute("INSERT INTO rules(pattern, category) VALUES('xyz', 'Fuel')")
         categorize.categorize_all(self.db)
         self.assertEqual(self.cat("1"), "Transport")
 

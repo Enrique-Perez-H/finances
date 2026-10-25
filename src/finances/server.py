@@ -68,8 +68,9 @@ GET_ROUTES = {
     "/api/review": lambda db, q: categorize.review_queue(db),
     "/api/review/generic": lambda db, q: categorize.generic_entries(db),
     "/api/categories": lambda db, q: categorize.all_categories(db),
-    "/api/rules": lambda db, q: [dict(r) for r in db.conn.execute(
-        "SELECT pattern, category FROM rules ORDER BY pattern")],
+    "/api/rules": lambda db, q: [dict(r, ignored=r["pattern"] in categorize.GENERIC_PATTERNS)
+                                 for r in db.conn.execute(
+        "SELECT pattern, direction, category FROM rules ORDER BY pattern, direction")],
 }
 
 
@@ -79,7 +80,8 @@ def _post_categorize(db, body):
         categorize.set_manual(db, str(body["tx_id"]), category)
         changed = 1
     else:
-        changed = categorize.add_rule(db, str(body.get("pattern", "")), category)
+        changed = categorize.add_rule(db, str(body.get("pattern", "")), category,
+                                      str(body.get("direction", "any")))
     db.save()
     return {"changed": changed}
 
@@ -97,7 +99,7 @@ def _post_block_pair(db, body):
 
 
 def _post_delete_rule(db, body):
-    changed = categorize.delete_rule(db, str(body.get("pattern", "")))
+    changed = categorize.delete_rule(db, str(body.get("pattern", "")), body.get("direction") or None)
     db.save()
     return {"changed": changed}
 

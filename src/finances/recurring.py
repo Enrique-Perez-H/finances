@@ -8,7 +8,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from statistics import median
 
-from .categorize import INTERNAL, merchant_key, normalize
+from .categorize import CAPITAL, INTERNAL, merchant_key, normalize
 from .db import Database
 
 # (name, min days, max days, typical days, payments per month)
@@ -39,7 +39,8 @@ def detect(db: Database, today: date | None = None) -> list[dict]:
     groups = defaultdict(list)
     for r in db.conn.execute(
             "SELECT date, amount, description, category FROM transactions"
-            " WHERE category != ? AND amount != 0 AND paired_with = '' ORDER BY date", (INTERNAL,)):
+            " WHERE category NOT IN (?, ?) AND amount != 0 AND paired_with = '' ORDER BY date",
+            (INTERNAL, CAPITAL)):
         key = merchant_key(r["description"]) or normalize(r["description"])
         groups[(r["amount"] > 0, key)].append(r)
 
