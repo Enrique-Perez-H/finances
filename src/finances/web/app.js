@@ -7,6 +7,7 @@ const TABS = [
   ['recurring', 'Recurring'],
   ['forecast', 'Forecast'],
   ['fund', 'Fund'],
+  ['yearly', 'Yearly'],
   ['accounts', 'Accounts'],
 ];
 const loaded = {};

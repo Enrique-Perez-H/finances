@@ -33,9 +33,25 @@ python -m unittest discover -s tests
 | Income | What you receive: salary, transfers, interest, by type, source and month |
 | Recurring | Detected recurring costs and income, monthly and yearly totals, what is coming up |
 | Forecast | Projects income, spending and wealth from your history plus assumptions you set |
+| Yearly | Per-year totals for the tax return: income by type, interest and dividends per account, taxes paid, what was left out, month by month, plus CSV export (Spanish Excel or standard) |
 | Fund | A child's part of your Trade Republic account: his share of each real interest payment (already net of tax) is credited to him and compounds, with a projection |
 
 Everything is computed locally. Internal transfers between your own accounts are excluded from spending and income, and so are reimbursement pairs: a payment and a receipt of the same amount (within 1%, up to 60 days apart) cancel out. Every pair is listed in the Spending tab, with a button to reject a wrong match.
+
+## Backup and restore
+
+Everything lives only on the device. The **Accounts** tab has a **Create backup** button; from a terminal:
+
+```sh
+finances backup            # writes finances-backup-DATE.zip (encrypted) to your Downloads
+finances restore FILE.zip  # on a new device; add --force to replace an existing vault
+```
+
+The backup only contains the already-encrypted files, so it is safe to store online, but the passphrase cannot be recovered. The app also keeps one local copy of the database per day (last 7).
+
+## Shortcut (Termux)
+
+`finances shortcut` writes a Termux:Widget script; `finances serve --open` starts the dashboard and opens the browser.
 
 ## Status
 

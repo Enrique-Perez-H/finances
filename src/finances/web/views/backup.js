@@ -1,4 +1,4 @@
-import {card, el, get, note, button} from '../ui.js';
+import {card, el, get, note, button, downloadPost} from '../ui.js';
 
 // Downloads an encrypted copy of the vault. Move it to a cloud drive: if the phone is lost,
 // this file plus your passphrase is the only way back.
@@ -9,15 +9,7 @@ export async function backupCard() {
   const make = button('Create backup', async () => {
     out.textContent = 'Creating…';
     try {
-      const r = await fetch('/api/backup', {method: 'POST', headers: {'X-Requested-With': 'finances'}});
-      if (!r.ok) throw new Error((await r.json()).error || r.status);
-      const name = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '')?.[1] || 'finances-backup.zip';
-      const url = URL.createObjectURL(await r.blob());
-      const a = el('a', {href: url, download: name});
-      document.body.append(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      const name = await downloadPost('/api/backup');
       out.textContent = `Saved as ${name} in your Downloads. Now move it to your cloud drive.`;
     } catch (e) { out.textContent = 'Failed: ' + e.message; }
   });

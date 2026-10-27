@@ -208,3 +208,18 @@ export function barChart(series, labels = [], {format = eur, notes = [], onSelec
   select(n - 1);
   return el('div', {className: 'chartbox'}, svg, readout);
 }
+
+// POST, then save the response as a file (the browser puts it in Downloads). Returns the file name.
+export async function downloadPost(path, body = {}) {
+  const r = await fetch(path, {method: 'POST', headers: {'X-Requested-With': 'finances', 'Content-Type': 'application/json'},
+    body: JSON.stringify(body)});
+  if (!r.ok) throw new Error((await r.json()).error || r.status);
+  const name = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '')?.[1] || 'download';
+  const url = URL.createObjectURL(await r.blob());
+  const a = el('a', {href: url, download: name});
+  document.body.append(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return name;
+}

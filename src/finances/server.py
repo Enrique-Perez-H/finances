@@ -11,7 +11,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis, backup, categorize, config, health, forecast, fund, history, income, pairs, recurring, sonfund
+from . import analysis, backup, categorize, config, health, forecast, fund, history, income, pairs, recurring, sonfund, yearly
 from .db import Database
 from .sync import run_sync
 
@@ -35,6 +35,17 @@ def local_ip() -> str:
 
 class BadRequest(Exception):
     pass
+
+
+def _year(value: str, db: Database, allow_all: bool = False) -> str:
+    if allow_all and value == "all":
+        return "all"
+    if not (len(value) == 4 and value.isdigit()):
+        years = yearly.years(db)
+        if value == "" and years:
+            return years[0]  # latest year with data
+        raise ValueError("year must look like 2025")
+    return value
 
 
 def _q(query: dict, key: str, default=None):
@@ -74,6 +85,7 @@ GET_ROUTES = {
     "/api/evolution": lambda db, q: history.evolution(db, int(_num(q, "months", 24))),
     "/api/pairs": lambda db, q: pairs.listing(db),
     "/api/backup/status": lambda db, q: {"last": backup.last_backup()},
+    "/api/yearly": lambda db, q: yearly.summary(db, _year(_q(q, "year", ""), db)),
     "/api/review": lambda db, q: categorize.review_queue(db),
     "/api/review/generic": lambda db, q: categorize.generic_entries(db),
     "/api/categories": lambda db, q: categorize.all_categories(db),
@@ -252,6 +264,15 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             path = self.path.split("?")[0]
             try:
                 body = self._body()
+                if path == "/api/export":
+                    year = _year(str(body.get("year", "")), db, allow_all=True)
+                    style = "csv" if body.get("style") == "csv" else "es"
+                    kind = body.get("kind", "entries")
+                    if kind not in ("entries", "summary") or (kind == "summary" and year == "all"):
+                        raise BadRequest("choose entries, or a summary of one year")
+                    with lock:
+                        data = (yearly.export_entries if kind == "entries" else yearly.export_summary)(db, year, style)
+                    return self._send(200, data, "text/csv; charset=utf-8", f"finances-{year}-{kind}.csv")
                 if path == "/api/backup":
                     with lock:
                         db.save()
