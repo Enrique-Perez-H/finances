@@ -10,7 +10,7 @@ function savedRange() {
 }
 
 export async function render(root) {
-  const [d, flow] = await Promise.all([get('/api/evolution?months=600'), get('/api/cashflow?months=600')]);
+  const [d, flow, health] = await Promise.all([get('/api/evolution?months=600'), get('/api/cashflow?months=600'), get('/api/health')]);
   if (!d.rows.length) {
     root.replaceChildren(card('Total', note('Nothing to show yet. Tap Sync.')));
     return;
@@ -113,5 +113,20 @@ export async function render(root) {
 
   const draw = () => { drawEvolution(); drawFlow(); };
   draw();
-  root.replaceChildren(total, evolutionCard, flowCard, topCard);
+  root.replaceChildren(statusCard(health), total, evolutionCard, flowCard, topCard);
+}
+
+const ago = hours => hours < 1 ? 'just now' : hours < 48 ? `${Math.round(hours)} h ago` : `${Math.round(hours / 24)} days ago`;
+const pretty = name => name.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+
+// What needs attention, and when each provider last synced.
+function statusCard(h) {
+  const synced = h.synced.length
+    ? h.synced.map(s => `${pretty(s.provider)} ${ago(s.hours_ago)}`).join(' · ') : 'Not synced yet';
+  const items = h.warnings.map(w => el('div', {className: 'row'},
+    el('span', {className: w.level === 'bad' ? 'neg' : '', textContent: (w.level === 'info' ? 'ℹ ' : '⚠ ') + w.text}),
+    w.tab ? el('button', {className: 'ghost', textContent: 'Open',
+      onclick: () => window.dispatchEvent(new CustomEvent('finances:goto', {detail: w.tab}))}) : null));
+  return card('Status', note(`Last sync: ${synced}`),
+    ...(items.length ? items : [note('Nothing needs your attention.')]));
 }

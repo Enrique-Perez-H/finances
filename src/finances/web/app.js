@@ -10,6 +10,18 @@ const TABS = [
   ['accounts', 'Accounts'],
 ];
 const loaded = {};
+let badgeTimer;
+
+// "Spending (12)": how many entries still need a category.
+async function refreshBadge() {
+  try {
+    const h = await get('/api/health');
+    const b = document.querySelector('#tabs button[data-tab="spending"]');
+    if (b) b.textContent = h.unclear ? `Spending (${h.unclear})` : 'Spending';
+  } catch (e) { /* the badge is a nicety */ }
+}
+window.addEventListener('finances:changed', () => { clearTimeout(badgeTimer); badgeTimer = setTimeout(refreshBadge, 500); });
+window.addEventListener('finances:goto', ev => show(ev.detail));
 let current = localStorage.getItem('tab') || 'overview';
 const root = document.getElementById('app');
 
@@ -22,6 +34,7 @@ async function show(name) {
   try {
     loaded[name] ??= await import(`./views/${name}.js`);
     await loaded[name].render(root);
+    refreshBadge();
   } catch (e) {
     root.replaceChildren(el('div', {className: 'card', textContent: `Could not load: ${e.message}`}));
   }

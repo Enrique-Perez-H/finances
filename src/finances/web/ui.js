@@ -32,6 +32,7 @@ export async function post(path, body) {
   });
   const data = await r.json();
   if (!r.ok) throw new Error(data.error || r.status);
+  window.dispatchEvent(new Event('finances:changed'));  // lets the tab badge refresh
   return data;
 }
 

@@ -11,7 +11,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis, backup, categorize, config, forecast, fund, history, income, pairs, recurring, sonfund
+from . import analysis, backup, categorize, config, health, forecast, fund, history, income, pairs, recurring, sonfund
 from .db import Database
 from .sync import run_sync
 
@@ -229,6 +229,9 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             if not self._host_ok():
                 return self._json(403, {"error": "forbidden host"})
             url = urllib.parse.urlparse(self.path)
+            if url.path == "/api/health":
+                with lock:
+                    return self._json(200, health.status(db, secrets))
             route = GET_ROUTES.get(url.path)
             if route:
                 try:
@@ -274,9 +277,23 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
     return Handler
 
 
-def serve(db: Database, secrets: dict, port: int = 8765) -> None:
+def open_browser(url: str) -> None:
+    """Open the dashboard: Termux has no default browser hook, Android's `am` does it."""
+    import shutil
+    import subprocess
+    import webbrowser
+    if shutil.which("am"):
+        subprocess.run(["am", "start", "-a", "android.intent.action.VIEW", "-d", url],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    else:
+        webbrowser.open(url)
+
+
+def serve(db: Database, secrets: dict, port: int = 8765, open_it: bool = False, opener=open_browser) -> None:
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(db, secrets))
     print(f"Dashboard on http://localhost:{port}  (Ctrl+C to stop)")
+    if open_it:
+        opener(f"http://localhost:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

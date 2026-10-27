@@ -18,6 +18,7 @@ def main(argv=None):
     sub.add_parser("sync", help="fetch data from the configured sources")
     s = sub.add_parser("serve", help="run the dashboard on localhost")
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--open", action="store_true", help="open the dashboard in the browser once it is running")
     fd = sub.add_parser("find", help="search your entries by text (shown only in your terminal)")
     fd.add_argument("text")
     bk = sub.add_parser("backup", help="write an encrypted backup of the vault to a folder")
@@ -25,6 +26,7 @@ def main(argv=None):
     rs = sub.add_parser("restore", help="restore the vault from a backup file")
     rs.add_argument("file")
     rs.add_argument("--force", action="store_true", help="replace an existing vault (it is kept aside)")
+    sub.add_parser("shortcut", help="create a home-screen shortcut for Termux:Widget that starts the dashboard")
     rl = sub.add_parser("rules", help="list your own category rules (or delete one)")
     rl.add_argument("--delete", metavar="PATTERN")
     rl.add_argument("--import", dest="import_file", metavar="FILE",
@@ -77,6 +79,21 @@ def _sync_interactive(db, secrets, sources, passphrase):
 
 
 def _run(args):
+    if args.cmd == "shortcut":
+        folder = os.path.expanduser("~/.shortcuts")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "Finances")
+        with open(path, "w") as f:
+            f.write("#!/data/data/com.termux/files/usr/bin/bash\n"
+                    "# Starts the finances dashboard and opens it in the browser.\n"
+                    "termux-wake-lock 2>/dev/null\n"
+                    "cd ~/finances || exit 1\n"
+                    "exec finances serve --open\n")
+        os.chmod(path, 0o700)
+        print(f"Shortcut written: {path}\n"
+              "Install Termux:Widget from F-Droid, long-press your home screen, add the Termux:Widget "
+              "shortcut list, then tap Finances. It asks for your passphrase and opens the dashboard.")
+        return 0
     if args.cmd == "backup":
         from . import backup
         default = os.path.expanduser("~/storage/downloads")
@@ -242,7 +259,7 @@ def _run(args):
         if not db.conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone() and sources:
             run_sync(db, secrets, sources,
                      persist_secrets=lambda s: config.save_secrets(passphrase, s))
-        serve(db, secrets, args.port)
+        serve(db, secrets, args.port, open_it=args.open)
     return 0
 
 
