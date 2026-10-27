@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+import zipfile
 
 from . import config, vault
 from .db import Database
@@ -19,6 +20,11 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8765)
     fd = sub.add_parser("find", help="search your entries by text (shown only in your terminal)")
     fd.add_argument("text")
+    bk = sub.add_parser("backup", help="write an encrypted backup of the vault to a folder")
+    bk.add_argument("--to", default=None, help="folder (default: ~/storage/downloads if it exists, else your home)")
+    rs = sub.add_parser("restore", help="restore the vault from a backup file")
+    rs.add_argument("file")
+    rs.add_argument("--force", action="store_true", help="replace an existing vault (it is kept aside)")
     rl = sub.add_parser("rules", help="list your own category rules (or delete one)")
     rl.add_argument("--delete", metavar="PATTERN")
     rl.add_argument("--import", dest="import_file", metavar="FILE",
@@ -50,6 +56,9 @@ def main(argv=None):
     except vault.WrongPassphrase:
         print("Wrong passphrase. (If this is a throwaway demo vault you can delete it: "
               f"rm -rf {config.home()})", file=sys.stderr)
+        return 1
+    except (ValueError, zipfile.BadZipFile, FileNotFoundError) as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
 
