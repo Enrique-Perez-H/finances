@@ -115,6 +115,8 @@ class Database:
     def save(self) -> None:
         self.conn.commit()
         path = db_path()
+        from . import backup
+        backup.rolling_copy()  # yesterday's state is kept before today's first write
         tmp = path.with_suffix(".tmp")
         tmp.write_bytes(vault.encrypt(self.passphrase, self.conn.serialize()))
         tmp.chmod(0o600)

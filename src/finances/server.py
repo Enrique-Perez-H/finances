@@ -11,7 +11,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis, categorize, config, forecast, fund, history, income, pairs, recurring, sonfund
+from . import analysis, backup, categorize, config, forecast, fund, history, income, pairs, recurring, sonfund
 from .db import Database
 from .sync import run_sync
 
@@ -73,6 +73,7 @@ GET_ROUTES = {
     "/api/sonfund": lambda db, q: sonfund.payload(db),
     "/api/evolution": lambda db, q: history.evolution(db, int(_num(q, "months", 24))),
     "/api/pairs": lambda db, q: pairs.listing(db),
+    "/api/backup/status": lambda db, q: {"last": backup.last_backup()},
     "/api/review": lambda db, q: categorize.review_queue(db),
     "/api/review/generic": lambda db, q: categorize.generic_entries(db),
     "/api/categories": lambda db, q: categorize.all_categories(db),
@@ -186,9 +187,11 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
             return host in allowed_hosts
 
-        def _send(self, code, body: bytes, ctype="application/json"):
+        def _send(self, code, body: bytes, ctype="application/json", filename=None):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
+            if filename:
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
@@ -246,6 +249,12 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             path = self.path.split("?")[0]
             try:
                 body = self._body()
+                if path == "/api/backup":
+                    with lock:
+                        db.save()
+                        name, data = backup.make_backup_bytes()
+                        backup.mark_backup()
+                    return self._send(200, data, "application/zip", name)
                 if path == "/api/sync":
                     inputs = {k: str(v) for k, v in (body.get("inputs") or {}).items()}
                     with sync_lock:

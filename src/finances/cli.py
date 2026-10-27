@@ -68,6 +68,19 @@ def _sync_interactive(db, secrets, sources, passphrase):
 
 
 def _run(args):
+    if args.cmd == "backup":
+        from . import backup
+        default = os.path.expanduser("~/storage/downloads")
+        out = backup.write_backup(args.to or (default if os.path.isdir(default) else os.path.expanduser("~")))
+        print(f"Backup written: {out}\nIt is encrypted. Keep it somewhere safe (cloud drive) and remember your passphrase.")
+        return 0
+    if args.cmd == "restore":
+        from . import backup
+        import getpass
+        secret = os.environ.get("FINANCES_PASSPHRASE") or getpass.getpass("Passphrase of the backup: ")
+        restored = backup.restore_backup(args.file, secret, args.force)
+        print("Restored: " + ", ".join(restored))
+        return 0
     passphrase = config.get_passphrase()
     secrets = config.load_secrets(passphrase)
 

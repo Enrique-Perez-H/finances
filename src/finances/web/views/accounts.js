@@ -1,5 +1,6 @@
 import {card, row, el, eur, get, post, note, barRow} from '../ui.js';
 import {toolsCard} from './tools.js';
+import {backupCard} from './backup.js';
 
 const LABELS = {cash: 'Cash', savings: 'Savings', investment: 'Investments'};
 let showAll = false;
@@ -38,5 +39,5 @@ export async function render(root) {
       return el('div', {className: 'review'}, row(a.name, eur(a.balance)), sel);
     }));
 
-  root.replaceChildren(types, interest, table, toolsCard(cats, rules, reload));
+  root.replaceChildren(types, interest, table, await backupCard(), toolsCard(cats, rules, reload));
 }
