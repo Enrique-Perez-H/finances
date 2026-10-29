@@ -26,6 +26,8 @@ def main(argv=None):
     rs = sub.add_parser("restore", help="restore the vault from a backup file")
     rs.add_argument("file")
     rs.add_argument("--force", action="store_true", help="replace an existing vault (it is kept aside)")
+    ex = sub.add_parser("recurring", help="explain why a payee is or is not detected as recurring")
+    ex.add_argument("text", help="part of the description, e.g. limpiezas")
     sub.add_parser("shortcut", help="create a home-screen shortcut for Termux:Widget that starts the dashboard")
     rl = sub.add_parser("rules", help="list your own category rules (or delete one)")
     rl.add_argument("--delete", metavar="PATTERN")
@@ -151,6 +153,21 @@ def _run(args):
             print(f"Data: {r['provider']}: {r['n']} account(s), last update {r['last']}")
         return 0
 
+    if args.cmd == "recurring":
+        from . import recurring
+        db = Database(passphrase)
+        found = recurring.explain(db, args.text)
+        if not found:
+            print("No entries match that text.")
+        for g in found:
+            print(f"{g['key']} ({g['direction']}): {g['occurrences']} entries, "
+                  f"{'DETECTED' if g['detected'] else 'not detected'}{' (hidden by you)' if g['hidden'] else ''}")
+            print(f"  amounts: {g['amounts']}")
+            print(f"  gaps between entries (days): {g['gaps_days']}  cadence match: {g['cadence']}")
+            print(f"  entries per month: {g['per_month']}")
+            for reason in g["presence_reasons"]:
+                print(f"  not 'regular' because: {reason}")
+        return 0
     if args.cmd == "rules":
         from . import categorize
         db = Database(passphrase)

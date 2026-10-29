@@ -116,6 +116,18 @@ def _post_categorize_bulk(db, body):
     return {"moved": moved}
 
 
+def _post_recurring_ignore(db, body):
+    recurring.ignore(db, str(body.get("key", "")), str(body.get("direction", "")))
+    db.save()
+    return {"ok": True}
+
+
+def _post_recurring_restore(db, body):
+    recurring.restore(db, str(body.get("key", "")), str(body.get("direction", "")))
+    db.save()
+    return {"ok": True}
+
+
 def _post_merge_category(db, body):
     moved = categorize.merge_category(db, str(body.get("src", "")), str(body.get("dst", "")))
     db.save()
@@ -183,6 +195,8 @@ POST_ROUTES = {
     "/api/categorize/bulk": _post_categorize_bulk,
     "/api/rules/delete": _post_delete_rule,
     "/api/pairs/block": _post_block_pair,
+    "/api/recurring/ignore": _post_recurring_ignore,
+    "/api/recurring/restore": _post_recurring_restore,
     "/api/categories/merge": _post_merge_category,
 }
 

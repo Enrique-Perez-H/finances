@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS account_settings (
     id TEXT PRIMARY KEY,           -- account id
     kind TEXT NOT NULL             -- your choice of type; survives later syncs
 );
+CREATE TABLE IF NOT EXISTS recurring_ignored (
+    key TEXT NOT NULL,             -- the payee key shown in the recurring list
+    direction TEXT NOT NULL,       -- 'in' or 'out'
+    PRIMARY KEY (key, direction)
+);
 CREATE TABLE IF NOT EXISTS category_aliases (
     src TEXT PRIMARY KEY,          -- a category name that was merged or renamed
     dst TEXT NOT NULL              -- where its entries live now
