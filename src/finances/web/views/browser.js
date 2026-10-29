@@ -1,5 +1,22 @@
 import {card, row, el, eur2, get, post, note, button, categoryPicker} from '../ui.js';
 
+// "Mark as recurring": existing recurring items you made, or a new one.
+function recurringPicker(groups, onChoose) {
+  const sel = el('select', {className: 'picker'},
+    el('option', {value: '', textContent: 'Mark as recurring…', selected: true, disabled: true}),
+    ...groups.map(g => el('option', {value: String(g.group_id), textContent: `↻ ${g.label}`})),
+    el('option', {value: '__new__', textContent: '＋ New recurring item…'}));
+  sel.addEventListener('change', () => {
+    const value = sel.value;
+    sel.selectedIndex = 0;
+    if (value === '__new__') {
+      const name = (prompt('Name of this recurring item (e.g. Home cleaning)') || '').trim();
+      if (name) onChoose({name});
+    } else if (value) onChoose({group_id: Number(value)});
+  });
+  return sel;
+}
+
 const PAGE = 50;
 export const browse = {category: '*', period: 'month', q: '', sort: 'date', view: 'list', selected: new Set()};
 
@@ -18,6 +35,8 @@ export function browserCard(cats, months, month) {
   const root = card('Browse entries');
   root.id = 'browser';
   let items = [], meta = {count: 0, total_in: 0, total_out: 0, has_more: false};
+  let manual = [];
+  const flash = el('div', {className: 'muted'});
   const list = el('div', {});
   const summary = el('div', {className: 'muted'});
   const bulk = el('div', {className: 'bulk'});
@@ -37,6 +56,7 @@ export function browserCard(cats, months, month) {
     const res = await get('/api/entries?' + params(more ? items.length : 0));
     items = more ? items.concat(res.items) : res.items;
     meta = res;
+    try { manual = (await get('/api/recurring')).items.filter(i => i.kind === 'manual'); } catch (e) { manual = []; }
     if (!more) browse.selected.clear();
     draw();
   };
@@ -82,11 +102,21 @@ export function browserCard(cats, months, month) {
       categoryPicker(cats.filter(c => c !== t.category), c => moveOne(t, c), {current: t.category}));
   };
 
+  const markRecurring = async (ids, extra) => {
+    try {
+      const res = await post('/api/recurring/manual', {tx_ids: ids, ...extra});
+      await load();
+      flash.textContent = `Marked ${ids.length} entries as recurring. Find it in the Recurring tab.`;
+      return res;
+    } catch (e) { alert(e.message); }
+  };
+
   const drawBulk = () => {
     const n = browse.selected.size;
     bulk.replaceChildren(...(n ? [
       el('strong', {textContent: `${n} selected`}),
       categoryPicker(cats, moveSelected, {placeholder: `Move ${n} to…`}),
+      recurringPicker(manual, extra => markRecurring([...browse.selected], extra)),
       button('Clear', () => { browse.selected.clear(); draw(); }, 'ghost')] : []));
     bulk.style.display = n ? 'block' : 'none';
   };
@@ -112,6 +142,12 @@ export function browserCard(cats, months, month) {
         el('summary', {}, el('span', {textContent: `${g.label.slice(0, 30)} ×${g.items.length}`}),
           el('span', {textContent: eur2(g.total)})),
         el('div', {className: 'muted', textContent: 'Every entry containing (now and in future syncs):'}), pattern, moveAll,
+        button('Treat as a recurring item…', async () => {
+          const name = (prompt('Name of this recurring item (e.g. Home cleaning)', g.pattern) || '').trim();
+          if (!name) return;
+          const future = confirm(`Also include future entries containing "${pattern.value}" automatically?`);
+          await markRecurring(g.items.map(t => t.id), {name, ...(future ? {pattern: pattern.value} : {})});
+        }, 'ghost'),
         ...g.items.map(entryRow));
     });
   };
@@ -139,7 +175,7 @@ export function browserCard(cats, months, month) {
       select('period', periods, browse.period, v => { browse.period = v; load(); }),
       select('sort', [['date', 'Newest first'], ['amount', 'Largest first']], browse.sort, v => { browse.sort = v; load(); }),
       select('view', [['list', 'List'], ['shops', 'Grouped by shop']], browse.view, v => { browse.view = v; draw(); })),
-    search, summary, bulk, list);
+    search, summary, flash, bulk, list);
   load();
   return root;
 }

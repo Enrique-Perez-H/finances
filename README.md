@@ -31,7 +31,7 @@ python -m unittest discover -s tests
 | Spending | Spending per category per month, plus an average month (3m, 6m, 12m or all). Entries it cannot classify are put to you in a review queue; each answer becomes a rule applied to past and future entries. You can also fix single entries. A browser lists every entry by category and period (search, sort, move one, several or a whole shop). |
 | Accounts | How each account counts (cash, savings, investment), interest and dividends received per month, month-by-month table |
 | Income | What you receive: salary, transfers, interest, by type, source and month |
-| Recurring | Detected recurring costs and income, monthly and yearly totals, what is coming up. Finds steady rhythms and also bills that arrive most months on different days with different amounts; you can reject a wrong one |
+| Recurring | Detected recurring costs and income, monthly and yearly totals, what is coming up. Finds steady rhythms and also bills that arrive most months on different days with different amounts; you can reject a wrong one, or mark entries as recurring yourself (select entries in Spending, or add one by its name) |
 | Forecast | Projects income, spending and wealth from your history plus assumptions you set |
 | Yearly | Per-year totals for the tax return: income by type, interest and dividends per account, taxes paid, what was left out, month by month, plus CSV export (Spanish Excel or standard) |
 | Fund | A child's part of your Trade Republic account: his share of each real interest payment (already net of tax) is credited to him and compounds, with a projection |

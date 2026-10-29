@@ -49,6 +49,22 @@ CREATE TABLE IF NOT EXISTS account_settings (
     id TEXT PRIMARY KEY,           -- account id
     kind TEXT NOT NULL             -- your choice of type; survives later syncs
 );
+CREATE TABLE IF NOT EXISTS recurring_manual (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    direction TEXT NOT NULL,       -- 'out' (a cost) or 'in'
+    cadence TEXT NOT NULL DEFAULT 'monthly'
+);
+CREATE TABLE IF NOT EXISTS recurring_manual_entries (
+    group_id INTEGER NOT NULL,
+    tx_id TEXT NOT NULL,
+    PRIMARY KEY (group_id, tx_id)
+);
+CREATE TABLE IF NOT EXISTS recurring_manual_patterns (
+    group_id INTEGER NOT NULL,
+    pattern TEXT NOT NULL,         -- normalized words: later entries containing them join the group
+    PRIMARY KEY (group_id, pattern)
+);
 CREATE TABLE IF NOT EXISTS recurring_ignored (
     key TEXT NOT NULL,             -- the payee key shown in the recurring list
     direction TEXT NOT NULL,       -- 'in' or 'out'

@@ -128,6 +128,51 @@ def _post_recurring_restore(db, body):
     return {"ok": True}
 
 
+def _gid(body):
+    try:
+        return int(body["group_id"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("group_id is required") from None
+
+
+def _post_manual_mark(db, body):
+    ids = body.get("tx_ids") or []
+    if not isinstance(ids, list):
+        raise ValueError("tx_ids must be a list")
+    gid = recurring.mark(db, ids, int(body["group_id"]) if body.get("group_id") not in (None, "") else None,
+                         body.get("name"), body.get("cadence") or "monthly", body.get("pattern") or None,
+                         body.get("direction"))
+    db.save()
+    return {"group_id": gid}
+
+
+def _post_manual_update(db, body):
+    recurring.update_manual(db, _gid(body), body.get("name"), body.get("cadence"))
+    db.save()
+    return {"ok": True}
+
+
+def _post_manual_pattern(db, body):
+    if body.get("remove"):
+        recurring.remove_pattern(db, _gid(body), str(body.get("pattern", "")))
+    else:
+        recurring.add_pattern(db, _gid(body), body.get("pattern"))
+    db.save()
+    return {"ok": True}
+
+
+def _post_manual_unlink(db, body):
+    recurring.unlink(db, _gid(body), str(body.get("tx_id", "")))
+    db.save()
+    return {"ok": True}
+
+
+def _post_manual_delete(db, body):
+    recurring.delete_manual(db, _gid(body))
+    db.save()
+    return {"ok": True}
+
+
 def _post_merge_category(db, body):
     moved = categorize.merge_category(db, str(body.get("src", "")), str(body.get("dst", "")))
     db.save()
@@ -195,6 +240,11 @@ POST_ROUTES = {
     "/api/categorize/bulk": _post_categorize_bulk,
     "/api/rules/delete": _post_delete_rule,
     "/api/pairs/block": _post_block_pair,
+    "/api/recurring/manual": _post_manual_mark,
+    "/api/recurring/manual/update": _post_manual_update,
+    "/api/recurring/manual/pattern": _post_manual_pattern,
+    "/api/recurring/manual/unlink": _post_manual_unlink,
+    "/api/recurring/manual/delete": _post_manual_delete,
     "/api/recurring/ignore": _post_recurring_ignore,
     "/api/recurring/restore": _post_recurring_restore,
     "/api/categories/merge": _post_merge_category,
