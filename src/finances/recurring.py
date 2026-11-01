@@ -57,7 +57,7 @@ def _cadence(gaps: list[int]):
 def _groups(db: Database, exclude: set[str] = frozenset()):
     groups = defaultdict(list)
     for r in db.conn.execute(
-            "SELECT id, date, amount, description, category FROM transactions"
+            "SELECT id, date, amount, description, category FROM counted"
             " WHERE category NOT IN (?, ?) AND amount != 0 AND paired_with = '' ORDER BY date",
             (INTERNAL, CAPITAL)):
         if r["id"] in exclude:
@@ -83,7 +83,7 @@ def _manual_rows(db: Database) -> dict[int, dict]:
         linked[r["group_id"]].add(r["tx_id"])
     matchers = {gid: [(p, normalize(p)) for p in g["patterns"]] for gid, g in groups.items()}
     for r in db.conn.execute(
-            "SELECT id, date, amount, description, category FROM transactions"
+            "SELECT id, date, amount, description, category FROM counted"
             " WHERE category NOT IN (?, ?) AND amount != 0 AND paired_with = '' ORDER BY date, id",
             (INTERNAL, CAPITAL)):
         text = None

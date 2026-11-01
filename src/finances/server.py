@@ -11,7 +11,8 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import analysis, backup, categorize, config, health, forecast, fund, history, income, pairs, recurring, sonfund, yearly
+from . import analysis, backup, categorize, config, health, forecast, fund, history, income, pairs, recurring, sonfund, tricount, yearly
+from .connectors.base import ConnectorError
 from .db import Database
 from .sync import run_sync
 
@@ -255,6 +256,58 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
     lock = threading.Lock()       # database reads/writes
     sync_lock = threading.Lock()  # one sync at a time
 
+    def persist():
+        config.save_secrets(db.passphrase, secrets)
+
+    def tricount_status() -> dict:
+        state = secrets.get("tricount") or {}
+        out = dict(configured=bool(state.get("token")), connected_as=state.get("me") or None,
+                   title=state.get("title", ""), members=state.get("members", []),
+                   synced_at=state.get("synced_at"), balance=state.get("balance"))
+        out.update(tricount.summary(db))
+        return out
+
+    def tricount_post(path: str, body: dict):
+        """The Tricount settings live in the vault, so these need `secrets` as well as the database."""
+        state = secrets.setdefault("tricount", {})
+        if path == "/api/tricount/connect":
+            token = tricount.extract_token(str(body.get("link", "")))
+            parsed = tricount.TricountClient(state).fetch(token)  # also proves the link works
+            if state.get("token") != token:
+                state.pop("me", None)
+            state.update(token=token, title=parsed["title"], members=parsed["members"])
+            persist()
+            return dict(title=parsed["title"], members=parsed["members"])
+        if path == "/api/tricount/me":
+            member = next((m for m in state.get("members", []) if m["uuid"] == body.get("uuid")), None)
+            if not member:
+                raise BadRequest("choose one of the members of the group")
+            state["me"] = member["uuid"]
+            sources = secrets.setdefault("sources", [])
+            if "tricount" not in sources:
+                sources.append("tricount")
+            persist()
+            return {"ok": True}
+        if path == "/api/tricount/disconnect":
+            with lock:
+                tricount.disconnect(db)
+                db.save()
+            secrets.pop("tricount", None)
+            secrets["sources"] = [s for s in secrets.get("sources", []) if s != "tricount"]
+            persist()
+            return {"ok": True}
+        if path == "/api/tricount/ignore":
+            with lock:
+                tricount.set_ignored(db, str(body.get("uuid", "")), bool(body.get("ignored", True)))
+                categorize.categorize_all(db)
+                db.save()
+            return {"ok": True}
+        if path == "/api/tricount/sync":
+            with sync_lock:
+                status = run_sync(db, secrets, ["tricount"], lock=lock, persist_secrets=lambda s: persist())
+            return status
+        return None
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # keep paths/amounts out of logs
             pass
@@ -305,6 +358,9 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             if not self._host_ok():
                 return self._json(403, {"error": "forbidden host"})
             url = urllib.parse.urlparse(self.path)
+            if url.path == "/api/tricount":
+                with lock:
+                    return self._json(200, tricount_status())
             if url.path == "/api/health":
                 with lock:
                     return self._json(200, health.status(db, secrets))
@@ -328,6 +384,23 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             path = self.path.split("?")[0]
             try:
                 body = self._body()
+                if path.startswith("/api/tricount/"):
+                    result = tricount_post(path, body)
+                    if result is None:
+                        return self._json(404, {"error": "not found"})
+                    return self._json(200, result)
+                if path == "/api/share":
+                    ids = body.get("tx_ids")
+                    if not isinstance(ids, list):
+                        raise BadRequest("tx_ids must be a list")
+                    try:
+                        share = float(body.get("share"))
+                    except (TypeError, ValueError):
+                        raise BadRequest("share must be a number between 0 and 1") from None
+                    with lock:
+                        n = tricount.set_share(db, [str(i) for i in ids], share)
+                        db.save()
+                    return self._json(200, {"changed": n})
                 if path == "/api/export":
                     year = _year(str(body.get("year", "")), db, allow_all=True)
                     style = "csv" if body.get("style") == "csv" else "es"
@@ -356,7 +429,7 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                     return self._json(404, {"error": "not found"})
                 with lock:
                     return self._json(200, route(db, body))
-            except (BadRequest, ValueError) as e:
+            except (BadRequest, ValueError, ConnectorError) as e:
                 return self._json(400, {"error": str(e)})
 
     return Handler

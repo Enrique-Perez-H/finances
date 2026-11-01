@@ -7,7 +7,7 @@ from .db import Database
 
 def net_worth(db: Database) -> dict:
     rows = db.conn.execute(
-        "SELECT kind, SUM(balance) AS total FROM accounts GROUP BY kind").fetchall()
+        "SELECT kind, SUM(balance) AS total FROM accounts WHERE kind != 'shared' GROUP BY kind").fetchall()
     by_kind = {r["kind"]: round(r["total"], 2) for r in rows}
     return {"total": round(sum(by_kind.values()), 2), "by_kind": by_kind}
 
@@ -20,7 +20,7 @@ def monthly_cashflow(db: Database, months: int = 6, today: date | None = None) -
         "SELECT substr(date,1,7) AS month,"
         " SUM(CASE WHEN amount>0 THEN amount ELSE 0 END) AS income,"
         " SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END) AS spending"
-        " FROM transactions WHERE category NOT IN (?, ?) AND paired_with = ''"
+        " FROM counted WHERE category NOT IN (?, ?) AND paired_with = ''"
         " GROUP BY month ORDER BY month DESC LIMIT ?", (INTERNAL, CAPITAL, months)).fetchall()
     return [dict(month=r["month"], income=round(r["income"], 2), spending=round(r["spending"], 2),
                  saved=round(r["income"] - r["spending"], 2), partial=r["month"] == current)
@@ -40,7 +40,7 @@ def average_month(db: Database, months: int | None = 12, today: date | None = No
     marks = ",".join("?" * len(used))
     rows = db.conn.execute(
         f"SELECT category, SUM(-amount) AS total, COUNT(DISTINCT substr(date,1,7)) AS active"
-        f" FROM transactions WHERE amount<0 AND category NOT IN (?, ?) AND paired_with = ''"
+        f" FROM counted WHERE amount<0 AND category NOT IN (?, ?) AND paired_with = ''"
         f" AND substr(date,1,7) IN ({marks}) GROUP BY category ORDER BY total DESC",
         (INTERNAL, CAPITAL, *used)).fetchall()
     n = len(used)
@@ -55,7 +55,7 @@ def average_month(db: Database, months: int | None = 12, today: date | None = No
 def spending_by_category(db: Database, month: str | None = None) -> list[dict]:
     month = month or date.today().isoformat()[:7]
     rows = db.conn.execute(
-        "SELECT category, SUM(-amount) AS total FROM transactions"
+        "SELECT category, SUM(-amount) AS total FROM counted"
         " WHERE amount<0 AND category NOT IN (?, ?) AND paired_with = '' AND substr(date,1,7)=?"
         " GROUP BY category ORDER BY total DESC", (INTERNAL, CAPITAL, month)).fetchall()
     return [dict(category=r["category"], total=round(r["total"], 2)) for r in rows]
@@ -80,7 +80,7 @@ def summary(db: Database) -> dict:
         "SELECT symbol, SUM(quantity) AS quantity, SUM(value) AS value,"
         " SUM(cost_basis) AS cost FROM holdings GROUP BY symbol").fetchall()
     accounts = db.conn.execute(
-        "SELECT id, provider, name, kind, currency, balance, updated_at FROM accounts"
+        "SELECT id, provider, name, kind, currency, balance, updated_at FROM accounts WHERE kind != 'shared'"
         " ORDER BY balance DESC").fetchall()
     return {
         "net_worth": net_worth(db),
@@ -111,7 +111,7 @@ def spending(db: Database, month: str | None = None) -> dict:
 
 
 def transactions(db: Database, category: str | None, month: str | None, limit: int = 200) -> list[dict]:
-    sql, args = ("SELECT id, date, amount, description, category, cat_source FROM transactions"
+    sql, args = ("SELECT id, date, amount, description, category, cat_source, share, raw_amount FROM counted"
                  " WHERE paired_with = ''"), []
     if category:
         sql += " AND category=?"
@@ -133,7 +133,7 @@ def entries(db: Database, category: str | None = None, since: str | None = None,
             offset: int = 0, limit: int = 50) -> dict:
     """Browse entries: filter by category (None or '*' = all), dates, and text (accent-insensitive).
     Reimbursement pairs are left out, they have their own list."""
-    sql, args = ("SELECT id, date, amount, description, category, cat_source FROM transactions"
+    sql, args = ("SELECT id, date, amount, description, category, cat_source, share, raw_amount FROM counted"
                  " WHERE paired_with = ''"), []
     if category and category != "*":
         sql += " AND category=?"
@@ -168,7 +168,7 @@ def top_entries(db: Database, month: str, n: int = 3) -> dict:
 
     def pick(sign: str, order: str):
         rows = db.conn.execute(
-            f"SELECT date, amount, description, category FROM transactions"
+            f"SELECT date, amount, description, category FROM counted"
             f" WHERE substr(date,1,7)=? AND amount {sign} 0 AND category NOT IN (?, ?)"
             f" AND paired_with='' ORDER BY amount {order}, date, id LIMIT ?",
             (month, INTERNAL, CAPITAL, n)).fetchall()

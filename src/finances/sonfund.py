@@ -176,5 +176,5 @@ def payload(db: Database, today: date | None = None) -> dict:
     out = simulate(db, today)
     out["deposits"] = [dict(r) for r in db.conn.execute(
         "SELECT id, date, amount, note FROM son_deposits ORDER BY date")]
-    out["accounts"] = [dict(r) for r in db.conn.execute("SELECT id, name, balance FROM accounts ORDER BY name")]
+    out["accounts"] = [dict(r) for r in db.conn.execute("SELECT id, name, balance FROM accounts WHERE kind != 'shared' ORDER BY name")]
     return out

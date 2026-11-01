@@ -62,6 +62,7 @@ class MccAndTransferTests(IsolatedHome):
 
     def test_old_database_gets_mcc_column(self):
         db = Database("pw")
+        db.conn.execute("DROP VIEW counted")  # an old database has no view yet
         db.conn.execute("ALTER TABLE transactions DROP COLUMN mcc")
         db._migrate()
         self.assertIn("mcc", {r["name"] for r in db.conn.execute("PRAGMA table_info(transactions)")})
@@ -338,6 +339,7 @@ class DbFlowTests(IsolatedHome):
 
     def test_migration_adds_column_to_old_database(self):
         db = Database("pw")
+        db.conn.execute("DROP VIEW counted")  # an old database has no view yet
         db.conn.execute("ALTER TABLE transactions DROP COLUMN cat_source")
         db._migrate()
         cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(transactions)")}

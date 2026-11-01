@@ -34,6 +34,7 @@ python -m unittest discover -s tests
 | Recurring | Detected recurring costs and income, monthly and yearly totals, what is coming up. Finds steady rhythms and also bills that arrive most months on different days with different amounts; you can reject a wrong one, or mark entries as recurring yourself (select entries in Spending, or add one by its name) |
 | Forecast | Projects income, spending and wealth from your history plus assumptions you set |
 | Yearly | Per-year totals for the tax return: income by type, interest and dividends per account, taxes paid, what was left out, month by month, plus CSV export (Spanish Excel or standard) |
+| Shared | Costs shared with your partner via a Tricount group (read-only): only your share counts as your spending, bank entries you paid are matched and count at your share, what your partner paid appears at your share. You can also mark any entry as shared 50/50 by hand. Unofficial interface: it may stop working if Tricount changes it |
 | Fund | A child's part of your Trade Republic account: his share of each real interest payment (already net of tax) is credited to him and compounds, with a projection |
 
 Everything is computed locally. Internal transfers between your own accounts are excluded from spending and income, and so are reimbursement pairs: a payment and a receipt of the same amount (within 1%, up to 60 days apart) cancel out. Every pair is listed in the Spending tab, with a button to reject a wrong match.

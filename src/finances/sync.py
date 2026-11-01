@@ -1,6 +1,6 @@
 import contextlib
 
-from . import history
+from . import history, tricount
 from .categorize import categorize_all
 from .connectors import REGISTRY
 from .connectors.base import ConnectorError, NeedsInput, Skipped
@@ -23,7 +23,24 @@ def run_sync(db: Database, secrets: dict, names: list[str], inputs: dict | None 
     lock = lock or contextlib.nullcontext()
     before = repr(secrets)
     status = {}
+    names = [n for n in names if n != "tricount"] + (["tricount"] if "tricount" in names else [])  # after the banks
     for name in names:
+        if name == "tricount":
+            try:
+                out = tricount.sync(db, secrets.setdefault("tricount", {}), lock=lock)
+                with lock:
+                    categorize_all(db)
+                    db.save()
+                status[name] = {"state": "ok", "expenses": out["count"], "matched": out["linked"],
+                                "virtual": out["virtual"]}
+                if out["unmatched_mine"]:
+                    status[name]["note"] = (f"{len(out['unmatched_mine'])} expenses you paid had no matching bank "
+                                            "entry yet and count at your share; they match automatically when it arrives.")
+            except ConnectorError as e:
+                status[name] = {"state": "error", "error": f"{type(e).__name__}: {e}"}
+            except Exception as e:
+                status[name] = {"state": "error", "error": type(e).__name__}
+            continue
         connector = _pending.pop(name, None) or REGISTRY[name](secrets)
         connector.set_psu(psu)
         try:
@@ -51,6 +68,7 @@ def run_sync(db: Database, secrets: dict, names: list[str], inputs: dict | None 
                 db.upsert_transaction(t)
             for account_id, rows in snap.holdings.items():
                 db.replace_holdings(account_id, rows)
+            tricount.rematch(db)  # a bank entry that arrives later gets matched to its shared expense
             categorize_all(db)
             history.snapshot(db)
             db.save()

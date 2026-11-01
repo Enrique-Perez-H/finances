@@ -19,7 +19,7 @@ def snapshot(db: Database, today: date | None = None) -> None:
     day = (today or date.today()).isoformat()
     db.conn.execute("DELETE FROM balance_history WHERE day=?", (day,))
     db.conn.execute("INSERT INTO balance_history(day, account_id, balance)"
-                    " SELECT ?, id, balance FROM accounts", (day,))
+                    " SELECT ?, id, balance FROM accounts WHERE kind != 'shared'", (day,))
 
 
 def set_kind(db: Database, account_id: str, kind: str) -> None:
@@ -44,7 +44,7 @@ def _month_ends(first: str, today: date) -> list[tuple[str, str]]:
 
 def evolution(db: Database, months: int = 24, today: date | None = None) -> dict:
     today = today or date.today()
-    accounts = [dict(r) for r in db.conn.execute("SELECT id, name, kind, balance FROM accounts")]
+    accounts = [dict(r) for r in db.conn.execute("SELECT id, name, kind, balance FROM accounts WHERE kind != 'shared'")]
     txs = {a["id"]: [] for a in accounts}
     for r in db.conn.execute("SELECT account_id, date, amount FROM transactions ORDER BY date"):
         txs.setdefault(r["account_id"], []).append((r["date"], r["amount"]))

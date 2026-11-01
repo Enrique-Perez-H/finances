@@ -1,5 +1,15 @@
 import {card, row, el, eur2, get, post, note, button, categoryPicker} from '../ui.js';
 
+// Shared costs: count only half of an entry as yours, or all of it again.
+function sharePicker(onChoose) {
+  const sel = el('select', {className: 'picker'},
+    el('option', {value: '', textContent: 'Share with partner…', selected: true, disabled: true}),
+    el('option', {value: '0.5', textContent: 'Shared 50/50: count half'}),
+    el('option', {value: '1', textContent: 'Not shared: count all'}));
+  sel.addEventListener('change', () => { const v = Number(sel.value); sel.selectedIndex = 0; onChoose(v); });
+  return sel;
+}
+
 // "Mark as recurring": existing recurring items you made, or a new one.
 function recurringPicker(groups, onChoose) {
   const sel = el('select', {className: 'picker'},
@@ -99,7 +109,16 @@ export function browserCard(cats, months, month) {
       el('div', {className: 'row'}, el('label', {className: 'muted'}, box, ` ${t.date}`),
         el('span', {textContent: eur2(t.amount), className: t.amount < 0 ? 'neg' : 'pos'})),
       el('div', {className: 'desc', textContent: t.description}),
+      t.share < 1 ? el('div', {className: 'muted', textContent: `counts ${Math.round(t.share * 100)}% of ${eur2(Math.abs(t.raw_amount))} (shared)`}) : null,
       categoryPicker(cats.filter(c => c !== t.category), c => moveOne(t, c), {current: t.category}));
+  };
+
+  const shareSelected = async share => {
+    try {
+      await post('/api/share', {tx_ids: [...browse.selected], share});
+      browse.selected.clear();
+      await load();
+    } catch (e) { alert(e.message); }
   };
 
   const markRecurring = async (ids, extra) => {
@@ -117,6 +136,7 @@ export function browserCard(cats, months, month) {
       el('strong', {textContent: `${n} selected`}),
       categoryPicker(cats, moveSelected, {placeholder: `Move ${n} to…`}),
       recurringPicker(manual, extra => markRecurring([...browse.selected], extra)),
+      sharePicker(share => shareSelected(share)),
       button('Clear', () => { browse.selected.clear(); draw(); }, 'ghost')] : []));
     bulk.style.display = n ? 'block' : 'none';
   };

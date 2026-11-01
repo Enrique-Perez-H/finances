@@ -24,7 +24,7 @@ def years(db: Database) -> list[str]:
 def _rows(db: Database, year: str) -> list[dict]:
     return [dict(r) for r in db.conn.execute(
         "SELECT t.id, t.date, t.amount, t.description, t.category, t.cat_source, t.paired_with,"
-        " a.name AS account FROM transactions t JOIN accounts a ON a.id = t.account_id"
+        " a.name AS account FROM counted t JOIN accounts a ON a.id = t.account_id"
         " WHERE substr(t.date,1,4)=? ORDER BY t.date, t.id", (year,))]
 
 

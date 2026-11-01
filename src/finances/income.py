@@ -10,7 +10,7 @@ def summary(db: Database, months: int = 12, today: date | None = None) -> dict:
     """Completed months only: the current month is still filling up and would skew averages."""
     current = (today or date.today()).isoformat()[:7]
     rows = db.conn.execute(
-        "SELECT date, amount, description, category FROM transactions"
+        "SELECT date, amount, description, category FROM counted"
         " WHERE amount > 0 AND category NOT IN (?, ?) AND paired_with = '' ORDER BY date",
         (INTERNAL, CAPITAL)).fetchall()
     all_months = sorted({r["date"][:7] for r in rows if r["date"][:7] < current})[-months:]

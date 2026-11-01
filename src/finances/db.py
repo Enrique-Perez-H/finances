@@ -49,6 +49,17 @@ CREATE TABLE IF NOT EXISTS account_settings (
     id TEXT PRIMARY KEY,           -- account id
     kind TEXT NOT NULL             -- your choice of type; survives later syncs
 );
+CREATE TABLE IF NOT EXISTS tricount_expenses (
+    uuid TEXT PRIMARY KEY,         -- the expense in your Tricount group
+    date TEXT NOT NULL,
+    description TEXT NOT NULL,
+    total REAL NOT NULL,           -- what was paid, all of it
+    my_share REAL NOT NULL,        -- the part that is yours
+    payer TEXT NOT NULL,           -- 'me' or 'other'
+    ignored INTEGER NOT NULL DEFAULT 0,      -- you chose to leave it out
+    tx_id TEXT NOT NULL DEFAULT '',          -- the bank entry it is matched to, or the virtual entry
+    mode TEXT NOT NULL DEFAULT ''            -- 'linked' (bank entry) | 'virtual' | ''
+);
 CREATE TABLE IF NOT EXISTS recurring_manual (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -124,6 +135,10 @@ class Database:
                 DROP TABLE rules;
                 ALTER TABLE rules_new RENAME TO rules;""")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(transactions)")}
+        if "share" not in cols:  # fraction of the amount that is yours (shared costs); 1 = all of it
+            self.conn.execute("ALTER TABLE transactions ADD COLUMN share REAL NOT NULL DEFAULT 1.0")
+        if "share_source" not in cols:  # '' | 'manual' | 'tricount'
+            self.conn.execute("ALTER TABLE transactions ADD COLUMN share_source TEXT NOT NULL DEFAULT ''")
         if "paired_with" not in cols:  # id of the matching spend/reimbursement, '' if none
             self.conn.execute("ALTER TABLE transactions ADD COLUMN paired_with TEXT NOT NULL DEFAULT ''")
         if "pair_blocked" not in cols:  # 1 = you said this is not a reimbursement pair
@@ -132,6 +147,12 @@ class Database:
             self.conn.execute("ALTER TABLE transactions ADD COLUMN mcc TEXT NOT NULL DEFAULT ''")
         if "cat_source" not in cols:  # '' auto/unset, 'default', 'user' (rule), 'manual' (one entry)
             self.conn.execute("ALTER TABLE transactions ADD COLUMN cat_source TEXT NOT NULL DEFAULT ''")
+        self.conn.executescript("""
+            DROP VIEW IF EXISTS counted;
+            CREATE VIEW counted AS
+            SELECT id, account_id, date, amount * share AS amount, description, category, mcc, cat_source,
+                   paired_with, pair_blocked, share, amount AS raw_amount
+            FROM transactions;""")
 
     def save(self) -> None:
         self.conn.commit()

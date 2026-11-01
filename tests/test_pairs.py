@@ -111,6 +111,7 @@ class IntegrationTests(IsolatedHome):
     def test_demo_has_a_pair_and_migration_adds_columns(self):
         run_sync(self.db, {}, ["demo"])
         self.assertGreater(pairs.listing(self.db)["count"], 0)
+        self.db.conn.execute("DROP VIEW counted")  # an old database has no view yet
         self.db.conn.execute("ALTER TABLE transactions DROP COLUMN paired_with")
         self.db.conn.execute("ALTER TABLE transactions DROP COLUMN pair_blocked")
         self.db._migrate()

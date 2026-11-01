@@ -8,6 +8,7 @@ const TABS = [
   ['forecast', 'Forecast'],
   ['fund', 'Fund'],
   ['yearly', 'Yearly'],
+  ['shared', 'Shared'],
   ['accounts', 'Accounts'],
 ];
 const loaded = {};

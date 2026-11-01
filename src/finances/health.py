@@ -18,7 +18,7 @@ def _time(value: str) -> datetime:
 def status(db: Database, secrets: dict, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     accounts = [dict(r) for r in db.conn.execute(
-        "SELECT name, provider, updated_at FROM accounts ORDER BY provider, name")]
+        "SELECT name, provider, updated_at FROM accounts WHERE kind != 'shared' ORDER BY provider, name")]
     by_provider = {}
     for a in accounts:
         t = _time(a["updated_at"]) if a["updated_at"] and a["updated_at"] != "t" else None

@@ -31,7 +31,7 @@ def baseline(db: Database, today: date, lookback: int = 6) -> dict:
     rec = recurring.summary(db, today)
     rec_in = min(rec["monthly_income"], avg_in)
     rec_out = min(rec["monthly_costs"], avg_out)
-    rows = db.conn.execute("SELECT kind, SUM(balance) b FROM accounts GROUP BY kind").fetchall()
+    rows = db.conn.execute("SELECT kind, SUM(balance) b FROM accounts WHERE kind != 'shared' GROUP BY kind").fetchall()
     kinds = {r["kind"]: r["b"] for r in rows}
     return dict(
         months_used=n, income=round(avg_in, 2), spending=round(avg_out, 2),
