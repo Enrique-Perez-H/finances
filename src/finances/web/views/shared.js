@@ -102,10 +102,37 @@ export async function render(root) {
     d.unmatched_mine.length > unmatchedShown
       ? button(`Show ${Math.min(10, d.unmatched_mine.length - unmatchedShown)} more`, () => { unmatchedShown += 10; reload(); }, 'ghost') : null)
     : null;
+  const hints = (() => {
+    const tri = el('input', {placeholder: 'In Tricount you call it… e.g. repostaje', className: 'wide'});
+    const bank = el('input', {placeholder: 'In the bank it reads… e.g. repsol', className: 'wide'});
+    const out = el('div', {className: 'muted'});
+    const addHint = async (t, b) => { try { await post('/api/tricount/alias', {tri: t, bank: b}); reload(); } catch (e) { alert(e.message); } };
+    return card('Matching hints',
+      note('Tell me what your Tricount words mean in the bank. An expense with that word is then matched to a bank payment containing that text, up to 10 days before and 5 weeks after, as long as the amount agrees. Several words can point to the same payee (fibra and netflix to your phone company).'),
+      ...(d.aliases.length ? d.aliases.map(a => el('div', {className: 'row'},
+        el('span', {textContent: `“${a.tri_key}” → “${a.bank_pattern}”${a.source === 'learned' ? ` · learned (${a.uses}×)` : ''}`}),
+        button('✕', async () => { await post('/api/tricount/alias/delete', {tri: a.tri_key, bank: a.bank_pattern}); reload(); }, 'ghost')))
+        : [note('No hints yet.')]),
+      tri, bank, button('Add hint', () => addHint(tri.value, bank.value)),
+      ...(d.suggested_aliases.length ? [
+        el('div', {className: 'muted', textContent: 'Seen in your matched expenses, add them as hints?'}),
+        ...d.suggested_aliases.map(x => el('div', {className: 'row'},
+          el('span', {textContent: `“${x.tri_key}” → “${x.bank_pattern}” (${x.seen}×)`}),
+          button('Add', () => addHint(x.tri_key, x.bank_pattern), 'ghost'))),
+        button(`Add all ${d.suggested_aliases.length}`, async () => {
+          for (const x of d.suggested_aliases) { try { await post('/api/tricount/alias', {tri: x.tri_key, bank: x.bank_pattern}); } catch (e) { /* skip */ } }
+          reload();
+        }, 'ghost')] : []),
+      button('Match the waiting ones now', async () => {
+        out.textContent = 'Matching…';
+        try { const r = await post('/api/tricount/rematch', {}); out.textContent = `${r.matched} expense${r.matched === 1 ? '' : 's'} matched.`; if (r.matched) setTimeout(reload, 900); }
+        catch (e) { out.textContent = 'Failed: ' + e.message; }
+      }), out);
+  })();
   const list = card('Recent shared expenses', ...(d.expenses.length ? d.expenses.slice(0, 30).map(e => el('div', {className: 'review'},
     row(`${e.date} · ${e.description.slice(0, 26)}`, `${eur2(e.my_share)} of ${eur2(e.total)}`), note(status(e)),
     e.mode === 'linked' ? button('Not this payment', () => act('/api/tricount/unlink', {uuid: e.uuid}), 'ghost') : null,
     toggle(e)))
     : [note('Nothing yet. Tap Sync Tricount.')]));
-  root.replaceChildren(head, ...(unmatched ? [unmatched] : []), list, caution);
+  root.replaceChildren(head, hints, ...(unmatched ? [unmatched] : []), list, caution);
 }

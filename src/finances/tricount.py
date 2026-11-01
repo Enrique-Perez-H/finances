@@ -23,6 +23,7 @@ from datetime import date, datetime, timedelta, timezone
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from .categorize import GENERIC_PATTERNS, merchant_key, normalize, suggest_pattern
 from .connectors.base import ConnectorError
 from .db import Database
 
@@ -31,6 +32,7 @@ BASE_URL = "https://api.tricount.bunq.com"
 USER_AGENT = "com.bunq.tricount.android:RELEASE:7.0.7:3174:ANDROID:13:C"
 ACCOUNT_ID = "tricount-shared"
 MATCH_DAYS_BEFORE, MATCH_DAYS_AFTER = 5, 21  # bank payments usually post days after the expense is logged
+ALIAS_DAYS_BEFORE, ALIAS_DAYS_AFTER = 10, 35  # wider when you told us how the payee appears in the bank
 CATEGORY_HINTS = {
     "GROCERIES": "Groceries", "FOOD_AND_DRINK": "Restaurants & bars", "TRANSPORT": "Transport",
     "HEALTHCARE": "Health", "INSURANCE": "Insurance", "SHOPPING": "Shopping", "ENTERTAINMENT": "Leisure",
@@ -234,20 +236,53 @@ def _linked_ids(db: Database, ignoring: str = "") -> set[str]:
         "SELECT tx_id FROM tricount_expenses WHERE mode='linked' AND uuid != ?", (ignoring,))}
 
 
+_MONTHS = {"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "setiembre",
+           "octubre", "noviembre", "diciembre", "january", "february", "march", "april", "may", "june", "july",
+           "august", "september", "october", "november", "december", "gener", "febrer", "marc", "maig", "juny",
+           "juliol", "setembre", "octubre", "novembre", "desembre"}
+
+
+def tri_key(description: str) -> str:
+    """How you call an expense in Tricount, without months and numbers: 'Fibra octubre 2026' -> 'fibra'."""
+    words = [w for w in normalize(description).split() if not any(c.isdigit() for c in w) and w not in _MONTHS]
+    return " ".join(words) or normalize(description)
+
+
+def _has_words(text: str, words: str) -> bool:
+    return bool(words) and f" {words} " in f" {text} "
+
+
+def _alias_patterns(db: Database, description: str) -> list[str]:
+    """The bank texts you associated with this kind of expense."""
+    text = normalize(description)
+    return [r["bank_pattern"] for r in db.conn.execute("SELECT tri_key, bank_pattern FROM tricount_aliases")
+            if _has_words(text, r["tri_key"])]
+
+
 def _window_pairs(db: Database, expenses: list[dict], taken: set[str]) -> list[tuple]:
     """Every (expense, bank payment) that could belong together: same amount (a cent of slack), the
-    payment inside the date window. Sorted best first: nearest date, then closest amount."""
+    payment inside the date window, or inside the wider one when its text matches a hint you gave.
+    Sorted best first: nearest date, then closest amount."""
     pairs = []
     for e in expenses:
         d = date.fromisoformat(e["date"])
-        lo, hi = (d - timedelta(days=MATCH_DAYS_BEFORE)).isoformat(), (d + timedelta(days=MATCH_DAYS_AFTER)).isoformat()
+        patterns = _alias_patterns(db, e.get("description", ""))
+        lo, hi = d - timedelta(days=MATCH_DAYS_BEFORE), d + timedelta(days=MATCH_DAYS_AFTER)
+        a_lo, a_hi = d - timedelta(days=ALIAS_DAYS_BEFORE), d + timedelta(days=ALIAS_DAYS_AFTER)
         tolerance = max(0.01, 0.005 * e["total"])
+        wide = (a_lo, a_hi) if patterns else (lo, hi)
         for r in db.conn.execute(
-                "SELECT id, date, amount FROM transactions WHERE amount < 0 AND account_id != ? AND date BETWEEN ? AND ?"
-                " AND paired_with = ''", (ACCOUNT_ID, lo, hi)):
+                "SELECT id, date, amount, description FROM transactions WHERE amount < 0 AND account_id != ?"
+                " AND date BETWEEN ? AND ? AND paired_with = ''", (ACCOUNT_ID, wide[0].isoformat(), wide[1].isoformat())):
             diff = abs(abs(r["amount"]) - e["total"])
-            if diff <= tolerance and r["id"] not in taken:
-                pairs.append((abs((date.fromisoformat(r["date"]) - d).days), diff, r["id"], e["uuid"]))
+            if diff > tolerance or r["id"] in taken:
+                continue
+            rd = date.fromisoformat(r["date"])
+            if not (lo <= rd <= hi):  # outside the usual window: only for a payee you named
+                text = normalize(r["description"])
+                if not any(_has_words(text, p) for p in patterns):
+                    continue
+            pairs.append((abs((rd - d).days), diff, r["id"], e["uuid"]))
     pairs.sort()
     return pairs
 
@@ -362,8 +397,8 @@ def rematch(db: Database) -> int:
     """Bank entries that arrived after the expense was logged: turn virtual entries into matches."""
     rows = db.conn.execute("SELECT * FROM tricount_expenses WHERE mode='virtual' AND payer='me' AND ignored=0"
                            " AND pinned=0").fetchall()
-    matches = assign_matches(db, [dict(uuid=r["uuid"], date=r["date"], total=r["total"]) for r in rows],
-                             _linked_ids(db))
+    matches = assign_matches(db, [dict(uuid=r["uuid"], date=r["date"], total=r["total"],
+                                       description=r["description"]) for r in rows], _linked_ids(db))
     by_uuid = {r["uuid"]: r for r in rows}
     for uid, tx_id in matches.items():
         r = by_uuid[uid]
@@ -456,6 +491,7 @@ def candidates(db: Database, uid: str, limit: int = 4) -> list[dict]:
     day = date.fromisoformat(row["date"])
     taken = _linked_ids(db, uid)
     words = set(normalize(row["description"]).split())
+    patterns = _alias_patterns(db, row["description"])
     out = []
     for r in db.conn.execute(
             "SELECT b.id, b.date, b.amount, b.description, b.category, a.name AS account FROM transactions b"
@@ -470,12 +506,13 @@ def candidates(db: Database, uid: str, limit: int = 4) -> list[dict]:
             continue
         days = (date.fromisoformat(r["date"]) - day).days
         shared_words = words & set(normalize(r["description"]).split())
-        score = rel * 20 + abs(days) / 15 - (0.15 if shared_words else 0)  # amount first, then date, text breaks ties
+        hinted = any(_has_words(normalize(r["description"]), p) for p in patterns)
+        score = rel * 20 + abs(days) / 15 - (0.15 if shared_words else 0) - (0.5 if hinted else 0)  # amount, date, then text
         how = "same amount" if abs(diff) < 0.005 else f"{'more' if diff > 0 else 'less'} by {abs(diff):.2f}"
         when = "same day" if days == 0 else f"{abs(days)} day{'s' if abs(days) != 1 else ''} {'later' if days > 0 else 'earlier'}"
         out.append(dict(id=r["id"], date=r["date"], amount=r["amount"], description=r["description"][:70],
                         category=r["category"], account=r["account"], score=round(score, 3),
-                        reason=f"{how}, {when}" + (", similar text" if shared_words else "")))
+                        reason=f"{how}, {when}" + (", matches your hint" if hinted else ", similar text" if shared_words else "")))
     out.sort(key=lambda c: (c["score"], c["date"], c["id"]))
     return out[:limit]
 
@@ -497,6 +534,8 @@ def link(db: Database, uid: str, tx_id: str) -> None:
     _drop_virtual(db, uid)
     _set_share(db, tx_id, (row["my_share"] / row["total"]) if row["total"] else 1.0)
     db.conn.execute("UPDATE tricount_expenses SET mode='linked', tx_id=?, pinned=1, ignored=0 WHERE uuid=?", (tx_id, uid))
+    bank = db.conn.execute("SELECT description FROM transactions WHERE id=?", (tx_id,)).fetchone()
+    learn(db, row["description"], bank["description"])
 
 
 def confirm_elsewhere(db: Database, uid: str) -> None:
@@ -553,4 +592,55 @@ def search_payments(db: Database, uid: str, q: str = "", days: int = 90, limit: 
     out.sort(key=lambda c: c["_key"])
     for c in out:
         del c["_key"]
+    return out[:limit]
+
+
+# --- hints: what your Tricount words mean in the bank ------------------------------------------
+
+def _bank_pattern(bank_description: str) -> str:
+    return suggest_pattern(merchant_key(bank_description) or normalize(bank_description), bank_description)
+
+
+def _usable(tri: str, bank: str) -> bool:
+    return (len(tri) >= 3 and len(bank) >= 3 and bank not in GENERIC_PATTERNS and tri not in GENERIC_PATTERNS)
+
+
+def learn(db: Database, tri_description: str, bank_description: str) -> None:
+    """You confirmed a match: remember how this expense shows up in the bank, for next time."""
+    tri, bank = tri_key(tri_description), _bank_pattern(bank_description)
+    if _usable(tri, bank):
+        db.conn.execute("INSERT INTO tricount_aliases(tri_key, bank_pattern, uses, source) VALUES(?,?,1,'learned')"
+                        " ON CONFLICT(tri_key, bank_pattern) DO UPDATE SET uses = uses + 1", (tri, bank))
+
+
+def add_alias(db: Database, tri: str, bank: str) -> None:
+    tri, bank = normalize(tri), normalize(bank)
+    if not _usable(tri, bank):
+        raise ValueError("give at least 3 letters on each side, and not a word like 'transferencia'")
+    db.conn.execute("INSERT INTO tricount_aliases(tri_key, bank_pattern, uses, source) VALUES(?,?,0,'manual')"
+                    " ON CONFLICT(tri_key, bank_pattern) DO UPDATE SET source='manual'", (tri, bank))
+
+
+def delete_alias(db: Database, tri: str, bank: str) -> None:
+    db.conn.execute("DELETE FROM tricount_aliases WHERE tri_key=? AND bank_pattern=?", (normalize(tri), normalize(bank)))
+
+
+def aliases(db: Database) -> list[dict]:
+    return [dict(r) for r in db.conn.execute(
+        "SELECT tri_key, bank_pattern, uses, source FROM tricount_aliases ORDER BY tri_key, bank_pattern")]
+
+
+def suggest_aliases(db: Database, min_uses: int = 2, limit: int = 20) -> list[dict]:
+    """Pairs seen in at least two of your matched expenses (e.g. 'mercadona' paid at 'mercadona')
+    that are not hints yet. Repetition makes a coincidence of amounts unlikely."""
+    known = {(a["tri_key"], a["bank_pattern"]) for a in aliases(db)}
+    counts = {}
+    for r in db.conn.execute(
+            "SELECT e.description AS tri, t.description AS bank FROM tricount_expenses e"
+            " JOIN transactions t ON t.id = e.tx_id WHERE e.mode = 'linked'"):
+        pair = (tri_key(r["tri"]), _bank_pattern(r["bank"]))
+        if _usable(*pair) and pair not in known:
+            counts[pair] = counts.get(pair, 0) + 1
+    out = [dict(tri_key=t, bank_pattern=b, seen=n) for (t, b), n in counts.items() if n >= min_uses]
+    out.sort(key=lambda s: (-s["seen"], s["tri_key"]))
     return out[:limit]

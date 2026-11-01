@@ -265,6 +265,8 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                    title=state.get("title", ""), members=state.get("members", []),
                    synced_at=state.get("synced_at"), balance=state.get("balance"))
         out.update(tricount.summary(db))
+        out["aliases"] = tricount.aliases(db)
+        out["suggested_aliases"] = tricount.suggest_aliases(db)
         out["unmatched_mine"] = [dict(e, candidates=tricount.candidates(db, e["uuid"], 3))
                                  for e in out["unmatched_mine"][:400]]  # a cheap query each: show them all
         return out
@@ -315,6 +317,18 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                     tricount.unlink(db, uid)
                 db.save()
             return {"ok": True}
+        if path in ("/api/tricount/alias", "/api/tricount/alias/delete", "/api/tricount/rematch"):
+            with lock:
+                if path.endswith("/rematch"):
+                    result = {"matched": tricount.rematch(db)}
+                elif path.endswith("/delete"):
+                    tricount.delete_alias(db, str(body.get("tri", "")), str(body.get("bank", "")))
+                    result = {"ok": True}
+                else:
+                    tricount.add_alias(db, str(body.get("tri", "")), str(body.get("bank", "")))
+                    result = {"ok": True}
+                db.save()
+            return result
         if path == "/api/tricount/sync":
             with sync_lock:
                 status = run_sync(db, secrets, ["tricount"], lock=lock, persist_secrets=lambda s: persist())

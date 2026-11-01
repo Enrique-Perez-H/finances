@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS tricount_expenses (
     pinned INTEGER NOT NULL DEFAULT 0,       -- you confirmed the match (or "paid elsewhere"): never redone
     category TEXT NOT NULL DEFAULT ''        -- Tricount's own category
 );
+CREATE TABLE IF NOT EXISTS tricount_aliases (
+    tri_key TEXT NOT NULL,         -- words in how you log the expense in Tricount, e.g. 'repostaje'
+    bank_pattern TEXT NOT NULL,    -- words in how it shows in the bank, e.g. 'repsol'
+    uses INTEGER NOT NULL DEFAULT 1,
+    source TEXT NOT NULL DEFAULT 'manual',   -- 'manual' | 'learned'
+    PRIMARY KEY (tri_key, bank_pattern)
+);
 CREATE TABLE IF NOT EXISTS recurring_manual (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

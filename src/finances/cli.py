@@ -28,6 +28,9 @@ def main(argv=None):
     rs.add_argument("--force", action="store_true", help="replace an existing vault (it is kept aside)")
     ex = sub.add_parser("recurring", help="explain why a payee is or is not detected as recurring")
     ex.add_argument("text", help="part of the description, e.g. limpiezas")
+    hn = sub.add_parser("hints", help="Tricount matching hints: list them, or add several from a JSON file")
+    hn.add_argument("--import", dest="import_file", metavar="FILE",
+                    help='JSON list like [{"tri": "repostaje", "bank": "repsol"}, ...]')
     sub.add_parser("shortcut", help="create a home-screen shortcut for Termux:Widget that starts the dashboard")
     rl = sub.add_parser("rules", help="list your own category rules (or delete one)")
     rl.add_argument("--delete", metavar="PATTERN")
@@ -153,6 +156,24 @@ def _run(args):
             print(f"Data: {r['provider']}: {r['n']} account(s), last update {r['last']}")
         return 0
 
+    if args.cmd == "hints":
+        from . import tricount
+        db = Database(passphrase)
+        if args.import_file:
+            with open(os.path.expanduser(args.import_file)) as f:
+                items = json.load(f)
+            for i, item in enumerate(items, 1):  # validate everything before saving anything
+                if not isinstance(item, dict) or "tri" not in item or "bank" not in item:
+                    raise ValueError(f"hint {i}: expected an object with tri and bank")
+            for item in items:
+                tricount.add_alias(db, str(item["tri"]), str(item["bank"]))
+            n = tricount.rematch(db)
+            db.save()
+            print(f"{len(items)} hints added, {n} waiting expenses matched. You can delete the file now.")
+            return 0
+        for a in tricount.aliases(db):
+            print(f"{a['tri_key']:<24} -> {a['bank_pattern']:<24} {a['source']} {a['uses']}x")
+        return 0
     if args.cmd == "recurring":
         from . import recurring
         db = Database(passphrase)

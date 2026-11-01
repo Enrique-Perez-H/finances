@@ -465,6 +465,134 @@ class ConfirmByHandTests(IsolatedHome):
         self.assertTrue({"pinned", "category"} <= cols)
 
 
+class HintTests(IsolatedHome):
+    """You log expenses consistently ('repostaje', 'luz'); the bank shows other words."""
+
+    def setUp(self):
+        super().setUp()
+        self.db = Database("pw")
+        self.db.upsert_account(dict(id="a", provider="t", name="Santander", kind="cash", currency="EUR",
+                                    balance=1, updated_at="t"))
+
+    def bank(self, id, day, amount, desc):
+        self.db.upsert_transaction(dict(id=id, account_id="a", date=day, amount=amount, description=desc,
+                                        category="uncategorized"))
+
+    def apply(self, *entries):
+        return tricount.apply(self.db, tricount.evaluate(tricount.parse_registry(registry(list(entries))), ME)["expenses"],
+                              NOW.isoformat())
+
+    def mode(self, uid):
+        return self.db.conn.execute("SELECT mode, tx_id FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()[:]
+
+    def fuel(self, uid="f1", day="2026-10-01"):
+        return entry(uid, "Repostaje", 60, ME, {ME: 30, PARTNER: 30}, day)
+
+    def test_tri_key_drops_months_and_numbers(self):
+        self.assertEqual(tricount.tri_key("Fibra octubre 2026"), "fibra")
+        self.assertEqual(tricount.tri_key("Luz (Octubre)"), "luz")
+        self.assertEqual(tricount.tri_key("Netflix"), "netflix")
+        self.assertEqual(tricount.tri_key("Octubre"), "octubre")  # nothing else to keep
+
+    def test_without_a_hint_a_late_payment_is_not_matched(self):
+        self.bank("late", "2026-10-28", -60, "REPSOL WAYL ZARAGOZA")  # 27 days later
+        self.apply(self.fuel())
+        self.assertEqual(self.mode("f1"), ("virtual", "tri-f1"))
+
+    def test_a_hint_widens_the_window_for_that_payee_only(self):
+        tricount.add_alias(self.db, "repostaje", "repsol")
+        self.bank("late", "2026-10-28", -60, "REPSOL WAYL ZARAGOZA")
+        self.bank("other", "2026-10-27", -60, "SOME OTHER SHOP")  # same amount, nearer, but not the hinted payee
+        self.apply(self.fuel())
+        self.assertEqual(self.mode("f1"), ("linked", "late"))
+        self.assertEqual(self.db.conn.execute("SELECT share FROM transactions WHERE id='other'").fetchone()[0], 1.0)
+
+    def test_a_hint_never_overrides_the_amount(self):
+        tricount.add_alias(self.db, "repostaje", "repsol")
+        self.bank("late", "2026-10-28", -75, "REPSOL WAYL")
+        self.apply(self.fuel())
+        self.assertEqual(self.mode("f1")[0], "virtual")
+
+    def test_one_payee_for_several_kinds_of_expense_is_told_apart_by_amount(self):
+        tricount.add_alias(self.db, "fibra", "pepe phone")
+        tricount.add_alias(self.db, "netflix", "pepe phone")
+        self.bank("p40", "2026-10-30", -40.0, "PEPE PHONE SL")
+        self.bank("p13", "2026-10-29", -12.99, "PEPE PHONE SL")
+        fibra = entry("fi", "Fibra octubre", 40, ME, {ME: 20, PARTNER: 20}, "2026-10-02")
+        netflix = entry("nf", "Netflix", 12.99, ME, {ME: 6.5, PARTNER: 6.49}, "2026-10-05")
+        self.apply(fibra, netflix)
+        self.assertEqual((self.mode("fi"), self.mode("nf")), (("linked", "p40"), ("linked", "p13")))
+
+    def test_rematch_applies_new_hints_to_expenses_still_waiting(self):
+        self.bank("late", "2026-10-28", -60, "REPSOL WAYL")
+        self.apply(self.fuel())
+        self.assertEqual(self.mode("f1")[0], "virtual")
+        tricount.add_alias(self.db, "repostaje", "repsol")
+        self.assertEqual(tricount.rematch(self.db), 1)
+        self.assertEqual(self.mode("f1"), ("linked", "late"))
+
+    def test_confirming_by_hand_teaches_a_hint_that_works_next_month(self):
+        self.bank("oct", "2026-10-29", -60, "REPSOL WAYL ZARAGOZA")
+        self.apply(self.fuel("f1", "2026-10-01"))  # 28 days: not matched automatically
+        tricount.link(self.db, "f1", "oct")
+        self.assertEqual([(a["tri_key"], a["bank_pattern"], a["source"]) for a in tricount.aliases(self.db)],
+                         [("repostaje", "repsol", "learned")])
+        self.bank("nov", "2026-11-27", -60, "REPSOL WAYL ZARAGOZA")
+        self.apply(self.fuel("f1", "2026-10-01"), self.fuel("f2", "2026-11-01"))
+        self.assertEqual(self.mode("f2"), ("linked", "nov"))  # 26 days later, found thanks to the hint
+
+    def test_suggestions_come_from_repeated_matches_only(self):
+        for i, (day, bank_day) in enumerate((("2026-08-03", "2026-08-04"), ("2026-09-03", "2026-09-05"), ("2026-10-03", "2026-10-04"))):
+            self.bank(f"m{i}", bank_day, -50 - i, "MERCADONA MADRID")
+        self.bank("one", "2026-10-10", -20, "FARMACIA CENTRO")
+        self.apply(*[entry(f"s{i}", "Mercadona", 50 + i, ME, {ME: (50 + i) / 2, PARTNER: (50 + i) / 2}, d)
+                     for i, d in enumerate(("2026-08-03", "2026-09-03", "2026-10-03"))],
+                   entry("ph", "Pharmacy", 20, ME, {ME: 10, PARTNER: 10}, "2026-10-10"))
+        suggestions = tricount.suggest_aliases(self.db)
+        self.assertEqual([(s["tri_key"], s["bank_pattern"], s["seen"]) for s in suggestions], [("mercadona", "mercadona", 3)])
+        tricount.add_alias(self.db, "mercadona", "mercadona")
+        self.assertEqual(tricount.suggest_aliases(self.db), [])  # not offered again
+
+    def test_hints_can_be_imported_from_a_file(self):
+        import json as _json, os, tempfile
+        from finances import cli
+        path = os.path.join(tempfile.mkdtemp(), "hints.json")
+        old = os.environ.get("FINANCES_PASSPHRASE")
+        os.environ["FINANCES_PASSPHRASE"] = "pw"
+        try:
+            self.db.save()
+            with open(path, "w") as f:
+                _json.dump([{"tri": "repostaje", "bank": "repsol"}, {"tri": "luz", "bank": "pepe energy"}], f)
+            self.assertEqual(cli.main(["hints", "--import", path]), 0)
+            self.assertEqual(len(tricount.aliases(Database("pw"))), 2)
+            with open(path, "w") as f:
+                _json.dump([{"tri": "ok words", "bank": "fine text"}, {"tri": "x"}], f)
+            self.assertEqual(cli.main(["hints", "--import", path]), 1)  # one bad entry: nothing is added
+            self.assertEqual(len(tricount.aliases(Database("pw"))), 2)
+        finally:
+            if old is None:
+                os.environ.pop("FINANCES_PASSPHRASE", None)
+            else:
+                os.environ["FINANCES_PASSPHRASE"] = old
+
+    def test_hint_validation_and_deletion(self):
+        for tri, bank in (("ab", "repsol"), ("repostaje", "ab"), ("repostaje", "transferencia"), ("", "")):
+            with self.assertRaises(ValueError, msg=(tri, bank)):
+                tricount.add_alias(self.db, tri, bank)
+        tricount.add_alias(self.db, "Repostaje", "REPSOL")
+        self.assertEqual(tricount.aliases(self.db)[0]["tri_key"], "repostaje")
+        tricount.delete_alias(self.db, "repostaje", "repsol")
+        self.assertEqual(tricount.aliases(self.db), [])
+
+    def test_candidates_mention_the_hint(self):
+        tricount.add_alias(self.db, "repostaje", "repsol")
+        self.bank("late", "2026-10-28", -60, "REPSOL WAYL")
+        self.apply(self.fuel())
+        tricount.unlink(self.db, "f1")
+        self.db.conn.execute("UPDATE tricount_expenses SET mode='virtual', pinned=0 WHERE uuid='f1'")
+        self.assertIn("matches your hint", tricount.candidates(self.db, "f1")[0]["reason"])
+
+
 class ManyUnmatchedTests(IsolatedHome):
     def test_every_unmatched_expense_gets_suggestions_not_just_the_first_few(self):
         db = Database("pw")
