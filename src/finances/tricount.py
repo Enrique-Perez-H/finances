@@ -522,3 +522,35 @@ def unlink(db: Database, uid: str) -> None:
     _put_virtual(db, dict(uuid=uid, date=row["date"], description=row["description"], my_share=row["my_share"],
                           category=row["category"]))
     db.conn.execute("UPDATE tricount_expenses SET mode='virtual', tx_id=?, pinned=0 WHERE uuid=?", (_virtual_id(uid), uid))
+
+
+def search_payments(db: Database, uid: str, q: str = "", days: int = 90, limit: int = 15) -> list[dict]:
+    """Look through your bank payments by hand when the suggestions are not the right ones: any amount,
+    around the expense's date, optionally containing some words (accents and capitals ignored)."""
+    from .categorize import normalize
+    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
+    if not row:
+        raise ValueError("unknown Tricount expense")
+    day = date.fromisoformat(row["date"])
+    days = max(1, min(int(days), 365))
+    needle = normalize(q or "")
+    taken = _linked_ids(db, uid)
+    out = []
+    for r in db.conn.execute(
+            "SELECT b.id, b.date, b.amount, b.description, b.category, a.name AS account FROM transactions b"
+            " JOIN accounts a ON a.id = b.account_id WHERE b.amount < 0 AND b.account_id != ? AND b.paired_with = ''"
+            " AND b.date BETWEEN ? AND ?",
+            (ACCOUNT_ID, (day - timedelta(days=days)).isoformat(), (day + timedelta(days=days)).isoformat())):
+        if r["id"] in taken or (needle and needle not in normalize(r["description"])):
+            continue
+        diff = abs(r["amount"]) - row["total"]
+        gap = (date.fromisoformat(r["date"]) - day).days
+        how = "same amount" if abs(diff) < 0.005 else f"{'more' if diff > 0 else 'less'} by {abs(diff):.2f}"
+        when = "same day" if gap == 0 else f"{abs(gap)} day{'s' if abs(gap) != 1 else ''} {'later' if gap > 0 else 'earlier'}"
+        out.append(dict(id=r["id"], date=r["date"], amount=r["amount"], description=r["description"][:70],
+                        category=r["category"], account=r["account"], reason=f"{how}, {when}",
+                        _key=(abs(abs(diff)) if not needle else abs(gap), abs(gap), r["id"])))
+    out.sort(key=lambda c: c["_key"])
+    for c in out:
+        del c["_key"]
+    return out[:limit]

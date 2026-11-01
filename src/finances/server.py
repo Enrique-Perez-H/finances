@@ -266,7 +266,7 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                    synced_at=state.get("synced_at"), balance=state.get("balance"))
         out.update(tricount.summary(db))
         out["unmatched_mine"] = [dict(e, candidates=tricount.candidates(db, e["uuid"], 3))
-                                 for e in out["unmatched_mine"][:25]] + out["unmatched_mine"][25:]
+                                 for e in out["unmatched_mine"][:400]]  # a cheap query each: show them all
         return out
 
     def tricount_post(path: str, body: dict):
@@ -371,6 +371,14 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             if not self._host_ok():
                 return self._json(403, {"error": "forbidden host"})
             url = urllib.parse.urlparse(self.path)
+            if url.path == "/api/tricount/search":
+                q = urllib.parse.parse_qs(url.query)
+                try:
+                    with lock:
+                        return self._json(200, tricount.search_payments(
+                            db, _q(q, "uuid", ""), _q(q, "q", ""), int(_num(q, "days", 90))))
+                except (BadRequest, ValueError) as e:
+                    return self._json(400, {"error": str(e)})
             if url.path == "/api/tricount":
                 with lock:
                     return self._json(200, tricount_status())

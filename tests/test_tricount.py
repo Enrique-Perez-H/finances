@@ -432,6 +432,28 @@ class ConfirmByHandTests(IsolatedHome):
         with self.assertRaises(ValueError):  # exact_near belongs to m1
             tricount.link(self.db, "m3", "exact_near")
 
+    def test_search_finds_payments_the_suggestions_missed(self):
+        self.bank("odd", "2026-11-20", -250.00, "PAGO ESCUELA INFANTIL")  # 48 days later, a very different amount
+        tricount.unlink(self.db, "m1")
+        self.assertNotIn("odd", [c["id"] for c in tricount.candidates(self.db, "m1", 20)])  # not suggested...
+        found = tricount.search_payments(self.db, "m1", "escuela", days=60)
+        self.assertEqual([c["id"] for c in found], ["odd"])  # ...but a search by words finds it
+        self.assertIn("less by 150.00, 48 days later", found[0]["reason"])
+        tricount.link(self.db, "m1", "odd")  # and it can be confirmed like any suggestion
+        self.assertEqual(self.row("odd")["share"], 0.5)
+
+    def test_search_rules(self):
+        tricount.unlink(self.db, "m1")
+        by_amount = [c["id"] for c in tricount.search_payments(self.db, "m1", "", days=30)]
+        self.assertEqual(by_amount[0], "exact_near")  # no words: closest amount first
+        self.assertNotIn("income", by_amount)        # receipts never
+        self.assertNotIn("same_amount_far", by_amount)  # outside the days asked for
+        self.assertEqual([c["id"] for c in tricount.search_payments(self.db, "m1", "ONE", 30)], [])
+        self.assertEqual([c["id"] for c in tricount.search_payments(self.db, "m1", "guardería", 30)], ["far"])  # accents ignored
+        with self.assertRaises(ValueError):
+            tricount.search_payments(self.db, "ghost", "x")
+        self.assertLessEqual(len(tricount.search_payments(self.db, "m1", "", 365, limit=2)), 2)
+
     def test_old_database_gets_the_new_columns(self):
         self.db.conn.executescript("""
             DROP TABLE tricount_expenses;
@@ -441,6 +463,38 @@ class ConfirmByHandTests(IsolatedHome):
         self.db._migrate()
         cols = {r["name"] for r in self.db.conn.execute("PRAGMA table_info(tricount_expenses)")}
         self.assertTrue({"pinned", "category"} <= cols)
+
+
+class ManyUnmatchedTests(IsolatedHome):
+    def test_every_unmatched_expense_gets_suggestions_not_just_the_first_few(self):
+        db = Database("pw")
+        db.upsert_account(dict(id="a", provider="t", name="Santander", kind="cash", currency="EUR",
+                               balance=1, updated_at="t"))
+        expenses, bank = [], []
+        for i in range(40):  # 40 expenses; each bank payment lands 40 days after: too late for automatic matching
+            day = f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}"
+            expenses.append(entry(f"e{i}", f"Expense {i}", 100 + i, ME, {ME: 50 + i / 2, PARTNER: 50 + i / 2}, day))
+            from datetime import date, timedelta
+            late = (date.fromisoformat(day) + timedelta(days=40)).isoformat()
+            db.upsert_transaction(dict(id=f"b{i}", account_id="a", date=late, amount=-(100 + i), description="X",
+                                       category="uncategorized"))
+        tricount.apply(db, tricount.evaluate(tricount.parse_registry(registry(expenses)), ME)["expenses"], NOW.isoformat())
+        db.save()
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(db, {"tricount": {"token": "tAbC123xyz", "me": ME}}))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{srv.server_address[1]}/api/tricount") as r:
+                info = json.loads(r.read())
+            self.assertEqual(len(info["unmatched_mine"]), 40)
+            self.assertTrue(all("candidates" in e and e["candidates"] for e in info["unmatched_mine"]))
+            first = info["unmatched_mine"][0]
+            with urllib.request.urlopen(f"http://127.0.0.1:{srv.server_address[1]}/api/tricount/search?uuid={first['uuid']}&q=x&days=60") as r:
+                self.assertTrue(json.loads(r.read()))
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(f"http://127.0.0.1:{srv.server_address[1]}/api/tricount/search?uuid=ghost")
+            self.assertEqual(ctx.exception.code, 400)
+        finally:
+            srv.shutdown()
 
 
 class SyncTests(IsolatedHome):
