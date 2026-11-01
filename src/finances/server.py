@@ -265,6 +265,8 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                    title=state.get("title", ""), members=state.get("members", []),
                    synced_at=state.get("synced_at"), balance=state.get("balance"))
         out.update(tricount.summary(db))
+        out["unmatched_mine"] = [dict(e, candidates=tricount.candidates(db, e["uuid"], 3))
+                                 for e in out["unmatched_mine"][:25]] + out["unmatched_mine"][25:]
         return out
 
     def tricount_post(path: str, body: dict):
@@ -300,6 +302,17 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             with lock:
                 tricount.set_ignored(db, str(body.get("uuid", "")), bool(body.get("ignored", True)))
                 categorize.categorize_all(db)
+                db.save()
+            return {"ok": True}
+        if path in ("/api/tricount/link", "/api/tricount/confirm", "/api/tricount/unlink"):
+            uid = str(body.get("uuid", ""))
+            with lock:
+                if path.endswith("/link"):
+                    tricount.link(db, uid, str(body.get("tx_id", "")))
+                elif path.endswith("/confirm"):
+                    tricount.confirm_elsewhere(db, uid)
+                else:
+                    tricount.unlink(db, uid)
                 db.save()
             return {"ok": True}
         if path == "/api/tricount/sync":

@@ -294,6 +294,131 @@ class BooksTests(IsolatedHome):
         self.assertEqual(d["latest"]["cash"], 1000.0)  # the real money moved is still the full 400
 
 
+class ConfirmByHandTests(IsolatedHome):
+    """Expenses the automatic matching missed: candidates and confirming one."""
+
+    def setUp(self):
+        super().setUp()
+        self.db = Database("pw")
+        for id, name in (("a", "Santander"), ("o", "Other bank")):
+            self.db.upsert_account(dict(id=id, provider="t", name=name, kind="cash", currency="EUR",
+                                        balance=1000, updated_at="t"))
+        # the group says 400 on 3 Oct; the bank took 412.30 on 30 Oct: too far for the automatic matching
+        self.expense = entry("m1", "Daycare October", 400, ME, {ME: 200, PARTNER: 200}, "2026-10-03", category="OTHER")
+        self.bank("far", "2026-10-30", -412.30, "GUARDERIA XYZ")
+        self.bank("same_amount_far", "2026-11-20", -400.00, "SOMETHING")
+        self.bank("text_near", "2026-10-06", -380.00, "DAYCARE OCTOBER ACME")
+        self.bank("exact_near", "2026-10-04", -400.00, "RANDOM SHOP")
+        self.bank("other_acct", "2026-10-04", -400.00, "ON ANOTHER BANK", account="o")
+        self.bank("income", "2026-10-04", 400.00, "A RECEIPT")
+        self.bank("wild", "2026-10-04", -900.00, "TOO DIFFERENT")
+        tricount.apply(self.db, tricount.evaluate(tricount.parse_registry(registry([self.expense])), ME)["expenses"],
+                       NOW.isoformat())
+
+    def bank(self, id, day, amount, desc, account="a"):
+        self.db.upsert_transaction(dict(id=id, account_id=account, date=day, amount=amount, description=desc,
+                                        category="uncategorized"))
+
+    def row(self, id):
+        return self.db.conn.execute("SELECT * FROM transactions WHERE id=?", (id,)).fetchone()
+
+    def test_the_automatic_match_took_the_obvious_one_and_left_the_rest(self):
+        # exact amount, one day apart: matched on its own
+        self.assertEqual(self.row("exact_near")["share"], 0.5)
+
+    def test_candidates_are_ranked_and_filtered(self):
+        tricount.unlink(self.db, "m1")  # forget the automatic match to look at the candidates
+        ids = [c["id"] for c in tricount.candidates(self.db, "m1", 10)]
+        self.assertEqual(ids[0], "exact_near")  # same amount, 1 day
+        self.assertIn("text_near", ids)          # 5% off but the text says daycare
+        self.assertIn("far", ids)
+        self.assertNotIn("income", ids)           # a receipt is never a payment
+        self.assertNotIn("wild", ids)             # more than 30% off
+        self.assertTrue(set(ids) <= {"exact_near", "text_near", "far", "same_amount_far", "other_acct"})
+        top = tricount.candidates(self.db, "m1", 1)[0]
+        self.assertEqual((top["reason"], top["account"]), ("same amount, 1 day later", "Santander"))
+        far = next(c for c in tricount.candidates(self.db, "m1", 10) if c["id"] == "far")
+        self.assertIn("more by 12.30", far["reason"])
+
+    def test_taken_payments_are_not_offered_twice(self):
+        other = entry("m2", "Second", 400, ME, {ME: 200, PARTNER: 200}, "2026-10-04")
+        tricount.apply(self.db, tricount.evaluate(tricount.parse_registry(registry([self.expense, other])), ME)["expenses"],
+                       NOW.isoformat())
+        taken = {r["tx_id"] for r in self.db.conn.execute("SELECT tx_id FROM tricount_expenses WHERE mode='linked'")}
+        for uid in ("m1", "m2"):
+            offered = {c["id"] for c in tricount.candidates(self.db, uid, 10)}
+            self.assertFalse(offered & (taken - {self.db.conn.execute(
+                "SELECT tx_id FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()[0]}))
+
+    def test_confirming_a_candidate_pins_the_match_and_uses_the_share_of_the_real_amount(self):
+        tricount.unlink(self.db, "m1")
+        tricount.link(self.db, "m1", "far")
+        far = self.row("far")
+        self.assertEqual((far["share"], far["share_source"]), (0.5, "tricount"))
+        counted = self.db.conn.execute("SELECT amount FROM counted WHERE id='far'").fetchone()[0]
+        self.assertEqual(counted, -206.15)  # half of what the bank really took
+        self.assertIsNone(self.row("tri-m1"))
+        self.assertEqual(self.db.conn.execute("SELECT mode, tx_id, pinned FROM tricount_expenses").fetchone()[:],
+                         ("linked", "far", 1))
+        self.assertEqual(self.row("exact_near")["share"], 1.0)  # the earlier automatic match was released
+
+    def test_a_confirmed_match_survives_syncs_edits_and_rematching(self):
+        tricount.unlink(self.db, "m1")
+        tricount.link(self.db, "m1", "far")
+        moved = entry("m1", "Daycare October", 400, ME, {ME: 100, PARTNER: 300}, "2026-10-09")  # edited in the group
+        tricount.apply(self.db, tricount.evaluate(tricount.parse_registry(registry([moved])), ME)["expenses"],
+                       NOW.isoformat())
+        self.assertEqual((self.row("far")["share"], self.row("far")["share_source"]), (0.25, "tricount"))
+        tricount.rematch(self.db)
+        self.assertEqual(self.row("exact_near")["share"], 1.0)  # automatic matching leaves confirmed ones alone
+
+    def test_paid_elsewhere_keeps_counting_the_share_and_stops_asking(self):
+        tricount.confirm_elsewhere(self.db, "m1")
+        self.assertEqual(self.row("tri-m1")["amount"], -200.0)
+        self.assertEqual(tricount.summary(self.db)["unmatched_mine"], [])
+        self.assertEqual(tricount.summary(self.db)["confirmed_elsewhere"], 1)
+        self.assertEqual(self.row("exact_near")["share"], 1.0)
+        tricount.apply(self.db, tricount.evaluate(tricount.parse_registry(registry([self.expense])), ME)["expenses"],
+                       NOW.isoformat())
+        self.assertEqual(self.row("exact_near")["share"], 1.0)  # a later sync does not match it behind your back
+
+    def test_unlinking_goes_back_to_asking(self):
+        tricount.link(self.db, "m1", "far")
+        tricount.unlink(self.db, "m1")
+        self.assertEqual(self.row("far")["share"], 1.0)
+        self.assertEqual(self.row("tri-m1")["amount"], -200.0)
+        self.assertEqual([e["uuid"] for e in tricount.summary(self.db)["unmatched_mine"]], ["m1"])
+
+    def test_invalid_confirmations(self):
+        with self.assertRaises(ValueError):
+            tricount.link(self.db, "ghost", "far")
+        for bad in ("income", "ghost"):
+            with self.assertRaises(ValueError):
+                tricount.link(self.db, "m1", bad)
+        with self.assertRaises(ValueError):  # already used by the automatic match of this very expense is fine,
+            tricount.link(self.db, "m1", "tri-m1")  # but the virtual entry is not a bank payment
+        gas = entry("g2", "Gas", 100, PARTNER, {ME: 50, PARTNER: 50}, "2026-10-10")
+        tricount.apply(self.db, tricount.evaluate(tricount.parse_registry(registry([self.expense, gas])), ME)["expenses"],
+                       NOW.isoformat())
+        with self.assertRaises(ValueError):  # your partner paid it: not in your bank
+            tricount.link(self.db, "g2", "far")
+        other = entry("m3", "Another", 400, ME, {ME: 200, PARTNER: 200}, "2026-10-20")
+        tricount.apply(self.db, tricount.evaluate(tricount.parse_registry(registry([self.expense, other])), ME)["expenses"],
+                       NOW.isoformat())
+        with self.assertRaises(ValueError):  # exact_near belongs to m1
+            tricount.link(self.db, "m3", "exact_near")
+
+    def test_old_database_gets_the_new_columns(self):
+        self.db.conn.executescript("""
+            DROP TABLE tricount_expenses;
+            CREATE TABLE tricount_expenses (uuid TEXT PRIMARY KEY, date TEXT NOT NULL, description TEXT NOT NULL,
+              total REAL NOT NULL, my_share REAL NOT NULL, payer TEXT NOT NULL, ignored INTEGER NOT NULL DEFAULT 0,
+              tx_id TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT '');""")
+        self.db._migrate()
+        cols = {r["name"] for r in self.db.conn.execute("PRAGMA table_info(tricount_expenses)")}
+        self.assertTrue({"pinned", "category"} <= cols)
+
+
 class SyncTests(IsolatedHome):
     def setUp(self):
         super().setUp()
@@ -387,6 +512,9 @@ class ApiTests(IsolatedHome):
             info = call("/api/tricount")[1]
             self.assertEqual((info["configured"], info["connected_as"], info["linked"], info["virtual"]), (True, ME, 1, 1))
             exp = next(e for e in info["expenses"] if e["uuid"] == "g1")
+            self.assertEqual(call("/api/tricount/confirm", {"uuid": "g1"})[0], 200)  # payer is the partner: harmless
+            self.assertEqual(call("/api/tricount/link", {"uuid": "g1", "tx_id": "b1"})[0], 400)
+            self.assertEqual(call("/api/tricount/unlink", {"uuid": "ghost"})[0], 400)
             self.assertEqual(call("/api/tricount/ignore", {"uuid": "g1", "ignored": True})[0], 200)
             self.assertEqual(call("/api/tricount")[1]["ignored"], 1)
             self.assertEqual(call("/api/share", {"tx_ids": ["b1"], "share": 0.3})[0], 400)  # matched to Tricount

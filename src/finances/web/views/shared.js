@@ -47,7 +47,9 @@ export async function render(root) {
     balance ? el('div', {className: 'big', textContent: balance}) : null,
     note(`You are ${me}${d.synced_at ? ` · last synced ${d.synced_at.replace('T', ' ').slice(0, 16)}` : ' · not synced yet'}`),
     row('Your share of all shared expenses', eur2(d.my_total)),
-    row('Matched to a bank entry', String(d.linked)), row('Paid by your partner (added)', String(d.virtual - d.unmatched_mine.length)),
+    row('Matched to a bank entry', String(d.linked)),
+    row('Paid by your partner (added)', String(d.expenses.filter(e => e.mode === 'virtual' && e.payer !== 'me' && !e.ignored).length)),
+    d.confirmed_elsewhere ? row('Paid elsewhere (confirmed by you)', String(d.confirmed_elsewhere)) : null,
     d.ignored ? row('Left out by you', String(d.ignored)) : null,
     sync, ' ', button('Disconnect', async () => {
       if (confirm('Disconnect Tricount? Everything goes back to counting in full, and the link is forgotten.')) {
@@ -60,14 +62,32 @@ export async function render(root) {
     await post('/api/tricount/ignore', {uuid: e.uuid, ignored: !e.ignored}); reload();
   }, 'ghost');
   const status = e => e.ignored ? 'left out by you'
-    : e.mode === 'linked' ? 'matched to your bank entry'
+    : e.mode === 'linked' ? (e.pinned ? 'matched to your bank entry (confirmed by you)' : 'matched to your bank entry')
+    : e.mode === 'virtual' && e.pinned && e.payer === 'me' ? 'paid elsewhere (confirmed by you): counted at your share'
     : e.payer === 'me' ? 'no bank entry found yet: counted at your share' : 'paid by your partner: added at your share';
-  const unmatched = d.unmatched_mine.length ? card('Paid by you, not found in the bank yet',
-    note('These count at your share for now and match automatically when the bank entry arrives. If you paid with an account that is not synced, they simply stay as they are.'),
+  const act = async (path, body) => {
+    try { await post(path, body); reload(); } catch (e) { alert(e.message); }
+  };
+  const candidateRow = (e, c) => el('div', {className: 'review'},
+    row(`${c.date} · ${c.description.slice(0, 30)}`, eur2(c.amount), 'neg'),
+    note(`${c.account} · ${c.reason}${c.category && c.category !== 'uncategorized' ? ' · ' + c.category : ''}`),
+    button('This is it', () => act('/api/tricount/link', {uuid: e.uuid, tx_id: c.id})));
+  const unmatched = d.unmatched_mine.length ? card(`Not matched to your bank yet (${d.unmatched_mine.length})`,
+    note('You paid these, but no bank payment was found with the same amount close to the date. They count at your share meanwhile. Pick the bank payment they correspond to, or say there is none.'),
     ...d.unmatched_mine.map(e => el('div', {className: 'review'},
-      row(`${e.date} · ${e.description.slice(0, 26)}`, `${eur2(e.my_share)} of ${eur2(e.total)}`), toggle(e)))) : null;
+      el('strong', {textContent: `${e.date} · ${e.description.slice(0, 28)}`}),
+      row('You paid, your share', `${eur2(e.total)} → ${eur2(e.my_share)}`),
+      ...(e.candidates === undefined ? [note('Confirm the ones above first to see suggestions for this one.')]
+        : e.candidates.length ? [note('Best candidates in your bank:'), ...e.candidates.map(c => candidateRow(e, c))]
+        : [note('No similar bank payment found within 45 days.')]),
+      el('div', {className: 'chips'},
+        button('Paid elsewhere: no bank entry', () => act('/api/tricount/confirm', {uuid: e.uuid}), 'chip'),
+        button('Leave out', () => act('/api/tricount/ignore', {uuid: e.uuid, ignored: true}), 'chip')))))
+    : null;
   const list = card('Recent shared expenses', ...(d.expenses.length ? d.expenses.slice(0, 30).map(e => el('div', {className: 'review'},
-    row(`${e.date} · ${e.description.slice(0, 26)}`, `${eur2(e.my_share)} of ${eur2(e.total)}`), note(status(e)), toggle(e)))
+    row(`${e.date} · ${e.description.slice(0, 26)}`, `${eur2(e.my_share)} of ${eur2(e.total)}`), note(status(e)),
+    e.mode === 'linked' ? button('Not this payment', () => act('/api/tricount/unlink', {uuid: e.uuid}), 'ghost') : null,
+    toggle(e)))
     : [note('Nothing yet. Tap Sync Tricount.')]));
   root.replaceChildren(head, ...(unmatched ? [unmatched] : []), list, caution);
 }

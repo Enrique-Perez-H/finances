@@ -58,7 +58,9 @@ CREATE TABLE IF NOT EXISTS tricount_expenses (
     payer TEXT NOT NULL,           -- 'me' or 'other'
     ignored INTEGER NOT NULL DEFAULT 0,      -- you chose to leave it out
     tx_id TEXT NOT NULL DEFAULT '',          -- the bank entry it is matched to, or the virtual entry
-    mode TEXT NOT NULL DEFAULT ''            -- 'linked' (bank entry) | 'virtual' | ''
+    mode TEXT NOT NULL DEFAULT '',           -- 'linked' (bank entry) | 'virtual' | ''
+    pinned INTEGER NOT NULL DEFAULT 0,       -- you confirmed the match (or "paid elsewhere"): never redone
+    category TEXT NOT NULL DEFAULT ''        -- Tricount's own category
 );
 CREATE TABLE IF NOT EXISTS recurring_manual (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,6 +137,11 @@ class Database:
                 DROP TABLE rules;
                 ALTER TABLE rules_new RENAME TO rules;""")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(transactions)")}
+        tri = {r["name"] for r in self.conn.execute("PRAGMA table_info(tricount_expenses)")}
+        if "pinned" not in tri:
+            self.conn.execute("ALTER TABLE tricount_expenses ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        if "category" not in tri:
+            self.conn.execute("ALTER TABLE tricount_expenses ADD COLUMN category TEXT NOT NULL DEFAULT ''")
         if "share" not in cols:  # fraction of the amount that is yours (shared costs); 1 = all of it
             self.conn.execute("ALTER TABLE transactions ADD COLUMN share REAL NOT NULL DEFAULT 1.0")
         if "share_source" not in cols:  # '' | 'manual' | 'tricount'

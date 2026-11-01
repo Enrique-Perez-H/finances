@@ -279,18 +279,26 @@ def apply(db: Database, expenses: list[dict], now: str) -> dict:
         row = stored.get(e["uuid"])
         mine = e["my_share"]
         payer = "me" if e["payer_is_me"] else "other"
-        changed = bool(row) and (abs(row["total"] - e["total"]) > 0.004 or row["date"] != e["date"])
+        ignored = bool(row["ignored"]) if row else False
+        pinned = bool(row["pinned"]) if row else False
+        if pinned and row["mode"] == "linked" and not db.conn.execute(
+                "SELECT 1 FROM transactions WHERE id=?", (row["tx_id"],)).fetchone():
+            pinned = False  # the bank entry is gone: start again
+        changed = bool(row) and not pinned and (abs(row["total"] - e["total"]) > 0.004 or row["date"] != e["date"])
         mode, tx_id = (row["mode"], row["tx_id"]) if row and not changed else ("", "")
         if row and changed:  # the group edited it: forget the old matching and start again
             if row["mode"] == "linked":
                 _clear_share(db, row["tx_id"])
             _drop_virtual(db, e["uuid"])
-        ignored = bool(row["ignored"]) if row else False
         if ignored or mine <= 0.004:
             if mode == "linked":
                 _clear_share(db, tx_id)
             _drop_virtual(db, e["uuid"])
             mode, tx_id = "", ""
+        elif pinned and mode == "linked":  # you confirmed it: only the share may change
+            _set_share(db, tx_id, mine / e["total"])
+        elif pinned and mode == "virtual":  # you said it was paid elsewhere
+            _put_virtual(db, e)
         elif e["payer_is_me"]:
             if mode == "linked" and db.conn.execute("SELECT 1 FROM transactions WHERE id=?", (tx_id,)).fetchone():
                 _set_share(db, tx_id, mine / e["total"])
@@ -307,11 +315,13 @@ def apply(db: Database, expenses: list[dict], now: str) -> dict:
             _put_virtual(db, e)
             mode, tx_id = "virtual", _virtual_id(e["uuid"])
         db.conn.execute(
-            "INSERT INTO tricount_expenses(uuid, date, description, total, my_share, payer, ignored, tx_id, mode)"
-            " VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(uuid) DO UPDATE SET date=excluded.date,"
+            "INSERT INTO tricount_expenses(uuid, date, description, total, my_share, payer, ignored, tx_id, mode, pinned, category)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(uuid) DO UPDATE SET date=excluded.date,"
             " description=excluded.description, total=excluded.total, my_share=excluded.my_share,"
-            " payer=excluded.payer, tx_id=excluded.tx_id, mode=excluded.mode",
-            (e["uuid"], e["date"], e["description"], e["total"], mine, payer, int(ignored), tx_id, mode))
+            " payer=excluded.payer, tx_id=excluded.tx_id, mode=excluded.mode, pinned=excluded.pinned,"
+            " category=excluded.category",
+            (e["uuid"], e["date"], e["description"], e["total"], mine, payer, int(ignored), tx_id, mode,
+             int(pinned and mode != ""), e["category"]))
     for uid, row in stored.items():  # deleted in the group
         if uid not in seen:
             if row["mode"] == "linked":
@@ -324,7 +334,8 @@ def apply(db: Database, expenses: list[dict], now: str) -> dict:
 def rematch(db: Database) -> int:
     """A bank entry that arrived after the expense was logged: turn the virtual entry into a match."""
     n = 0
-    for r in db.conn.execute("SELECT * FROM tricount_expenses WHERE mode='virtual' AND payer='me' AND ignored=0").fetchall():
+    for r in db.conn.execute("SELECT * FROM tricount_expenses WHERE mode='virtual' AND payer='me' AND ignored=0"
+                             " AND pinned=0").fetchall():
         match = find_bank_match(db, r["date"], r["total"], _linked_ids(db, r["uuid"]))
         if match:
             _drop_virtual(db, r["uuid"])
@@ -351,7 +362,9 @@ def summary(db: Database) -> dict:
     return dict(
         expenses=rows, count=len(rows),
         linked=sum(r["mode"] == "linked" for r in rows), virtual=sum(r["mode"] == "virtual" for r in rows),
-        unmatched_mine=[r for r in rows if r["mode"] == "virtual" and r["payer"] == "me"],
+        confirmed_elsewhere=sum(r["mode"] == "virtual" and r["pinned"] == 1 and r["payer"] == "me" for r in rows),
+        unmatched_mine=[r for r in rows if r["mode"] == "virtual" and r["payer"] == "me" and not r["pinned"]
+                        and not r["ignored"]],
         ignored=sum(bool(r["ignored"]) for r in rows),
         my_total=round(sum(r["my_share"] for r in rows if not r["ignored"]), 2))
 
@@ -398,3 +411,86 @@ def set_share(db: Database, tx_ids: list[str], share: float) -> int:
         f"UPDATE transactions SET share=?, share_source=? WHERE id IN ({marks}) AND account_id != ?",
         (share, "" if share == 1 else "manual", *tx_ids, ACCOUNT_ID))
     return cur.rowcount
+
+
+# --- confirming matches by hand ---------------------------------------------------------------
+
+CANDIDATE_DAYS = 45
+CANDIDATE_MAX_AMOUNT_DIFF = 0.30  # the bank amount may differ from the group's total by up to 30%
+
+
+def candidates(db: Database, uid: str, limit: int = 4) -> list[dict]:
+    """Bank payments that could be this expense, best first: close amount, close date, shared words."""
+    from .categorize import normalize
+    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
+    if not row:
+        raise ValueError("unknown Tricount expense")
+    day = date.fromisoformat(row["date"])
+    taken = _linked_ids(db, uid)
+    words = set(normalize(row["description"]).split())
+    out = []
+    for r in db.conn.execute(
+            "SELECT b.id, b.date, b.amount, b.description, b.category, a.name AS account FROM transactions b"
+            " JOIN accounts a ON a.id = b.account_id WHERE b.amount < 0 AND b.account_id != ? AND b.paired_with = ''"
+            " AND b.date BETWEEN ? AND ?",
+            (ACCOUNT_ID, (day - timedelta(days=CANDIDATE_DAYS)).isoformat(), (day + timedelta(days=CANDIDATE_DAYS)).isoformat())):
+        if r["id"] in taken:
+            continue
+        diff = abs(r["amount"]) - row["total"]
+        rel = abs(diff) / row["total"] if row["total"] else 1.0
+        if rel > CANDIDATE_MAX_AMOUNT_DIFF:
+            continue
+        days = (date.fromisoformat(r["date"]) - day).days
+        shared_words = words & set(normalize(r["description"]).split())
+        score = rel * 20 + abs(days) / 15 - (0.15 if shared_words else 0)  # amount first, then date, text breaks ties
+        how = "same amount" if abs(diff) < 0.005 else f"{'more' if diff > 0 else 'less'} by {abs(diff):.2f}"
+        when = "same day" if days == 0 else f"{abs(days)} day{'s' if abs(days) != 1 else ''} {'later' if days > 0 else 'earlier'}"
+        out.append(dict(id=r["id"], date=r["date"], amount=r["amount"], description=r["description"][:70],
+                        category=r["category"], account=r["account"], score=round(score, 3),
+                        reason=f"{how}, {when}" + (", similar text" if shared_words else "")))
+    out.sort(key=lambda c: (c["score"], c["date"], c["id"]))
+    return out[:limit]
+
+
+def link(db: Database, uid: str, tx_id: str) -> None:
+    """You confirm this bank payment is the expense. Its share is applied and the match is never redone."""
+    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
+    if not row:
+        raise ValueError("unknown Tricount expense")
+    if row["payer"] != "me":
+        raise ValueError("only expenses you paid can be matched to your bank")
+    tx = db.conn.execute("SELECT id, amount, account_id FROM transactions WHERE id=?", (tx_id,)).fetchone()
+    if not tx or tx["amount"] >= 0 or tx["account_id"] == ACCOUNT_ID:
+        raise ValueError("choose one of your bank payments")
+    if tx_id in _linked_ids(db, uid):
+        raise ValueError("that payment is already matched to another expense")
+    if row["mode"] == "linked":
+        _clear_share(db, row["tx_id"])
+    _drop_virtual(db, uid)
+    _set_share(db, tx_id, (row["my_share"] / row["total"]) if row["total"] else 1.0)
+    db.conn.execute("UPDATE tricount_expenses SET mode='linked', tx_id=?, pinned=1, ignored=0 WHERE uuid=?", (tx_id, uid))
+
+
+def confirm_elsewhere(db: Database, uid: str) -> None:
+    """There is no bank entry (paid in cash, another account): keep counting your share, stop asking."""
+    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
+    if not row:
+        raise ValueError("unknown Tricount expense")
+    if row["mode"] == "linked":
+        _clear_share(db, row["tx_id"])
+    _put_virtual(db, dict(uuid=uid, date=row["date"], description=row["description"], my_share=row["my_share"],
+                          category=row["category"]))
+    db.conn.execute("UPDATE tricount_expenses SET mode='virtual', tx_id=?, pinned=1, ignored=0 WHERE uuid=?",
+                    (_virtual_id(uid), uid))
+
+
+def unlink(db: Database, uid: str) -> None:
+    """Undo a confirmation: back to a virtual entry that can be matched again."""
+    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
+    if not row:
+        raise ValueError("unknown Tricount expense")
+    if row["mode"] == "linked":
+        _clear_share(db, row["tx_id"])
+    _put_virtual(db, dict(uuid=uid, date=row["date"], description=row["description"], my_share=row["my_share"],
+                          category=row["category"]))
+    db.conn.execute("UPDATE tricount_expenses SET mode='virtual', tx_id=?, pinned=0 WHERE uuid=?", (_virtual_id(uid), uid))
