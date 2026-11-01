@@ -56,31 +56,37 @@ class FakeHttp:
 class ParseTests(unittest.TestCase):
     def test_token_from_a_link_or_bare(self):
         ok = {
+            "https://tricount.com/FaBcDeFgHiJkLmNoP": "FaBcDeFgHiJkLmNoP",     # real ones need not start with t
             "https://tricount.com/tAbC123xyz": "tAbC123xyz",
             "https://tricount.com/tAbC123xyz/?x=1": "tAbC123xyz",
-            " tAbC123xyz ": "tAbC123xyz",
-            "https://tricount.com/en/tAbC123xyz": "tAbC123xyz",            # a language part
-            "https://tricount.com/#/tAbC123xyz": "tAbC123xyz",             # a fragment
-            "https://tricount.com/tAbC-12_3xyz": "tAbC-12_3xyz",           # hyphen and underscore
-            "http://tricount.com/tAbC123xyz\n": "tAbC123xyz",              # http and a newline
-            "Join my Tricount! https://tricount.com/tAbC123xyz See you": "tAbC123xyz",  # a whole message
-            "https://tricount.com/tAbC123xyz?utm_source=share#top": "tAbC123xyz",
-            "https%3A%2F%2Ftricount.com%2FtAbC123xyz": "tAbC123xyz",       # percent-encoded
-            "tricount.com/tAbC123xyz": "tAbC123xyz",                         # no scheme
+            " FaBcDeFgHiJkLmNoP ": "FaBcDeFgHiJkLmNoP",                         # the bare code
+            "https://tricount.com/en/FaBcDeFgHiJkLmNoP": "FaBcDeFgHiJkLmNoP",   # a language part
+            "https://tricount.com/en-us/FaBcDeFgHiJkLmNoP": "FaBcDeFgHiJkLmNoP",
+            "https://tricount.com/#/FaBcDeFgHiJkLmNoP": "FaBcDeFgHiJkLmNoP",    # a fragment
+            "https://tricount.com/FaBc-12_3xYz": "FaBc-12_3xYz",                 # hyphen and underscore
+            "http://tricount.com/FaBcDeFgHiJkLmNoP\n": "FaBcDeFgHiJkLmNoP",
+            "Join my Tricount! https://tricount.com/FaBcDeFgHiJkLmNoP See you": "FaBcDeFgHiJkLmNoP",
+            "https://tricount.com/FaBcDeFgHiJkLmNoP?utm_source=share#top": "FaBcDeFgHiJkLmNoP",
+            "https%3A%2F%2Ftricount.com%2FFaBcDeFgHiJkLmNoP": "FaBcDeFgHiJkLmNoP",
+            "tricount.com/FaBcDeFgHiJkLmNoP": "FaBcDeFgHiJkLmNoP",               # no scheme
+            "Here you go: FaBcDeFgHiJkLmNoP": "FaBcDeFgHiJkLmNoP",               # the code inside a sentence
         }
         for text, token in ok.items():
             self.assertEqual(tricount.extract_token(text), token, text)
 
     def test_unreadable_links_explain_their_shape_without_leaking_the_token(self):
-        for bad in ("", "hello", "https://example.com/", "https://tricount.com/xyz"):
-            with self.assertRaises(tricount.TricountError):
+        for bad in ("", "hello", "https://example.com/", "https://tricount.com/xyz", "https://tricount.com/share",
+                    "just some ordinary words here", "tricount"):
+            with self.assertRaises(tricount.TricountError, msg=bad):
                 tricount.extract_token(bad)
         with self.assertRaises(tricount.TricountError) as ctx:
-            tricount.extract_token("https://tricount.com/share/Qzx9Lm2PabcdefghiJK")
+            tricount.extract_token("https://tricount.com/short")
         message = str(ctx.exception)
         self.assertIn("tricount.com", message)
-        self.assertIn("Q… (19 characters)", message)       # shows the shape...
-        self.assertNotIn("Qzx9Lm2P", message)               # ...never the secret
+        self.assertIn("s… (5 characters)", message)
+        with self.assertRaises(tricount.TricountError) as ctx:
+            tricount.extract_token("https://elsewhere.org/$$$$$$$$$$$$$$$$$")
+        self.assertIn("elsewhere.org", str(ctx.exception))
 
     def test_parse_and_my_shares_and_balance(self):
         parsed = tricount.parse_registry(registry([DAYCARE, GAS, PAYBACK, DELETED]))

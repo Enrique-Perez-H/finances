@@ -42,7 +42,8 @@ class TricountError(ConnectorError):
     pass
 
 
-_TOKEN = re.compile(r"t[A-Za-z0-9_-]{6,60}")
+_TOKEN = re.compile(r"[A-Za-z0-9_-]{8,64}")
+_NOT_TOKENS = {"tricount", "share", "invite", "join", "download", "app", "group", "groups", "documents"}
 
 
 def _shape(text: str) -> str:
@@ -54,10 +55,14 @@ def _shape(text: str) -> str:
     return f"{host.group(1) if host else 'no address'} then {shown}"
 
 
+def _looks_like_a_token(piece: str) -> bool:
+    return bool(_TOKEN.fullmatch(piece)) and piece.lower() not in _NOT_TOKENS
+
+
 def extract_token(link: str) -> str:
     """Find the group's token in whatever was pasted: the share link, a whole 'join my Tricount'
     message with the link inside, a link with a language or fragment part, or the bare token.
-    The token is the piece starting with 't' at the end of the address, e.g. tricount.com/tAbC123xyz."""
+    The token is the last long piece of the address, e.g. tricount.com/XXXXXXXXXXXXXXXXX."""
     text = urllib.parse.unquote(str(link or "")).strip()
     candidates = []
     urls = re.findall(r"https?://[^\s<>\"']+", text)
@@ -65,16 +70,22 @@ def extract_token(link: str) -> str:
         urls = ["https://" + m for m in re.findall(r"[A-Za-z0-9-]+\.[A-Za-z]{2,}/[^\s<>\"']+", text)]
     for url in urls:
         parsed = urllib.parse.urlparse(url)
-        pieces = [p for p in re.split(r"[/]", parsed.path) if p]
-        pieces += [p for p in re.split(r"[/?&=#]", parsed.fragment + "&" + parsed.query) if p]
-        candidates += [p for p in pieces if _TOKEN.fullmatch(p)]
+        # the address path first; only if it holds nothing, the part after '#', then query values
+        for pieces in ([p for p in parsed.path.split("/") if p],
+                       [p for p in re.split(r"[/?&=]", parsed.fragment) if p],
+                       [v for vs in urllib.parse.parse_qs(parsed.query).values() for v in vs]):
+            found = [p for p in pieces if _looks_like_a_token(p)]
+            if found:
+                candidates += found
+                break
     if not candidates and not urls:  # just the token, maybe with a few words around it
-        candidates = [w for w in re.split(r"\s+", text) if _TOKEN.fullmatch(w.strip("/.,;:!?()"))]
-        candidates = [w.strip("/.,;:!?()") for w in candidates]
+        words = [w.strip("/.,;:!?()") for w in re.split(r"\s+", text)]
+        # a bare word must look like a code (digits or mixed case), not an ordinary word
+        candidates = [w for w in words if _looks_like_a_token(w) and (re.search(r"\d", w) or (w != w.lower() and w != w.upper()))]
     if not candidates:
-        raise TricountError("I could not find a Tricount token in that. It should end like tricount.com/tAbC123xyz. "
-                            f"What I received looks like: {_shape(text)}")
-    return candidates[0] if len(set(candidates)) == 1 else candidates[-1]
+        raise TricountError("I could not find a Tricount token in that. It is the long code at the end of the link, "
+                            f"like tricount.com/XXXXXXXXXXXXXXXXX. What I received looks like: {_shape(text)}")
+    return candidates[-1]
 
 
 def _first(d: dict | None) -> dict:
