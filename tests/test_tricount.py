@@ -55,12 +55,32 @@ class FakeHttp:
 
 class ParseTests(unittest.TestCase):
     def test_token_from_a_link_or_bare(self):
-        self.assertEqual(tricount.extract_token("https://tricount.com/tAbC123xyz"), "tAbC123xyz")
-        self.assertEqual(tricount.extract_token("https://tricount.com/tAbC123xyz/?x=1"), "tAbC123xyz")
-        self.assertEqual(tricount.extract_token(" tAbC123xyz "), "tAbC123xyz")
+        ok = {
+            "https://tricount.com/tAbC123xyz": "tAbC123xyz",
+            "https://tricount.com/tAbC123xyz/?x=1": "tAbC123xyz",
+            " tAbC123xyz ": "tAbC123xyz",
+            "https://tricount.com/en/tAbC123xyz": "tAbC123xyz",            # a language part
+            "https://tricount.com/#/tAbC123xyz": "tAbC123xyz",             # a fragment
+            "https://tricount.com/tAbC-12_3xyz": "tAbC-12_3xyz",           # hyphen and underscore
+            "http://tricount.com/tAbC123xyz\n": "tAbC123xyz",              # http and a newline
+            "Join my Tricount! https://tricount.com/tAbC123xyz See you": "tAbC123xyz",  # a whole message
+            "https://tricount.com/tAbC123xyz?utm_source=share#top": "tAbC123xyz",
+            "https%3A%2F%2Ftricount.com%2FtAbC123xyz": "tAbC123xyz",       # percent-encoded
+            "tricount.com/tAbC123xyz": "tAbC123xyz",                         # no scheme
+        }
+        for text, token in ok.items():
+            self.assertEqual(tricount.extract_token(text), token, text)
+
+    def test_unreadable_links_explain_their_shape_without_leaking_the_token(self):
         for bad in ("", "hello", "https://example.com/", "https://tricount.com/xyz"):
             with self.assertRaises(tricount.TricountError):
                 tricount.extract_token(bad)
+        with self.assertRaises(tricount.TricountError) as ctx:
+            tricount.extract_token("https://tricount.com/share/Qzx9Lm2PabcdefghiJK")
+        message = str(ctx.exception)
+        self.assertIn("tricount.com", message)
+        self.assertIn("Q… (19 characters)", message)       # shows the shape...
+        self.assertNotIn("Qzx9Lm2P", message)               # ...never the secret
 
     def test_parse_and_my_shares_and_balance(self):
         parsed = tricount.parse_registry(registry([DAYCARE, GAS, PAYBACK, DELETED]))
@@ -77,8 +97,9 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(before_payback, 150.0)  # she owes me 150
 
     def test_registry_without_a_group_is_an_error(self):
-        with self.assertRaises(tricount.TricountError):
-            tricount.parse_registry({"Response": []})
+        with self.assertRaises(tricount.TricountError) as ctx:
+            tricount.parse_registry({"Response": [{"UserPerson": {"id": 1}}]})
+        self.assertIn("answered with: UserPerson", str(ctx.exception))
 
     def test_odd_entries_do_not_crash(self):
         odd = {"RegistryEntry": {"uuid": "o", "amount": {"value": "abc"}}}
@@ -105,7 +126,7 @@ class ClientTests(unittest.TestCase):
     def test_errors_are_explained(self):
         with self.assertRaises(tricount.TricountError) as ctx:
             tricount.TricountClient({}, FakeHttp({}, 404)).fetch("tAbC123xyz")
-        self.assertIn("does not know that link", str(ctx.exception))
+        self.assertIn("does not know that link (HTTP 404)", str(ctx.exception))
         with self.assertRaises(tricount.TricountError):
             tricount.TricountClient({}, FakeHttp({}, 500)).fetch("tAbC123xyz")
 

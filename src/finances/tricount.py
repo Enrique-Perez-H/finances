@@ -15,6 +15,7 @@ What it does with your own books:
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid as uuidlib
 from datetime import date, datetime, timedelta, timezone
@@ -41,13 +42,39 @@ class TricountError(ConnectorError):
     pass
 
 
+_TOKEN = re.compile(r"t[A-Za-z0-9_-]{6,60}")
+
+
+def _shape(text: str) -> str:
+    """What a pasted link looks like with the secret hidden: the host stays, each path piece shows
+    only its first letter and its length."""
+    host = re.search(r"https?://([^/\s?#]+)", text)
+    pieces = [p for p in re.split(r"[/?#&=\s]+", re.sub(r"^.*?://[^/\s?#]+", "", text)) if p]
+    shown = ", ".join(f"{p[0]}… ({len(p)} characters)" for p in pieces[-3:]) or "nothing after the address"
+    return f"{host.group(1) if host else 'no address'} then {shown}"
+
+
 def extract_token(link: str) -> str:
-    """Accept the whole share link or just the token (it starts with 't')."""
-    text = str(link or "").strip().split("?")[0].rstrip("/")
-    token = text.rsplit("/", 1)[-1]
-    if not re.fullmatch(r"t[A-Za-z0-9]{6,40}", token):
-        raise TricountError("that does not look like a Tricount share link (it ends in something like tAbC123xyz)")
-    return token
+    """Find the group's token in whatever was pasted: the share link, a whole 'join my Tricount'
+    message with the link inside, a link with a language or fragment part, or the bare token.
+    The token is the piece starting with 't' at the end of the address, e.g. tricount.com/tAbC123xyz."""
+    text = urllib.parse.unquote(str(link or "")).strip()
+    candidates = []
+    urls = re.findall(r"https?://[^\s<>\"']+", text)
+    if not urls and re.search(r"[A-Za-z0-9-]+\.[A-Za-z]{2,}/\S+", text):  # an address pasted without https://
+        urls = ["https://" + m for m in re.findall(r"[A-Za-z0-9-]+\.[A-Za-z]{2,}/[^\s<>\"']+", text)]
+    for url in urls:
+        parsed = urllib.parse.urlparse(url)
+        pieces = [p for p in re.split(r"[/]", parsed.path) if p]
+        pieces += [p for p in re.split(r"[/?&=#]", parsed.fragment + "&" + parsed.query) if p]
+        candidates += [p for p in pieces if _TOKEN.fullmatch(p)]
+    if not candidates and not urls:  # just the token, maybe with a few words around it
+        candidates = [w for w in re.split(r"\s+", text) if _TOKEN.fullmatch(w.strip("/.,;:!?()"))]
+        candidates = [w.strip("/.,;:!?()") for w in candidates]
+    if not candidates:
+        raise TricountError("I could not find a Tricount token in that. It should end like tricount.com/tAbC123xyz. "
+                            f"What I received looks like: {_shape(text)}")
+    return candidates[0] if len(set(candidates)) == 1 else candidates[-1]
 
 
 def _first(d: dict | None) -> dict:
@@ -65,7 +92,9 @@ def parse_registry(data: dict) -> dict:
         if isinstance(item, dict) and "Registry" in item:
             registry = item["Registry"]
     if registry is None:
-        raise TricountError("Tricount did not return that group: check the link")
+        kinds = sorted({k for item in data.get("Response", []) if isinstance(item, dict) for k in item}) or ["nothing"]
+        raise TricountError("Tricount did not return that group: check the link "
+                            f"(it answered with: {', '.join(kinds)})")
     members = []
     for m in registry.get("memberships", []):
         inner = _first(m)
@@ -172,7 +201,7 @@ class TricountClient:
         status, data = self._http("GET", f"{BASE_URL}/v1/user/{self.user_id}/registry?public_identifier_token={token}",
                                   self.headers)
         if status == 404 or (status < 400 and not data.get("Response")):
-            raise TricountError("Tricount does not know that link: check it, or whether the group was deleted")
+            raise TricountError(f"Tricount does not know that link (HTTP {status}): check it, or whether the group was deleted")
         if status >= 400:
             raise TricountError(f"Tricount answered HTTP {status}")
         return parse_registry(data)
