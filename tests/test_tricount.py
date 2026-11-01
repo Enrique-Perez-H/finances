@@ -250,6 +250,30 @@ class BooksTests(IsolatedHome):
         self.assertEqual(tricount.find_bank_match(self.db, "2026-10-03", 400.0, {"w2"}), "w1")
         self.assertEqual(tricount.find_bank_match(self.db, "2026-10-03", 400.01, set()), "w2")  # a cent of slack
 
+    def test_payments_a_couple_of_weeks_later_are_matched_automatically(self):
+        self.db.conn.execute("DELETE FROM transactions WHERE id='b1'")
+        self.bank("late15", "2026-10-18", -400, "GUARDERIA XYZ")  # 15 days after the expense date
+        self.apply([DAYCARE])
+        self.assertEqual((self.row("late15")["share"], self.row("late15")["share_source"]), (0.5, "tricount"))
+        self.assertIsNone(self.row("tri-d1"))
+
+    def test_the_window_has_limits(self):
+        self.db.conn.execute("DELETE FROM transactions WHERE id='b1'")
+        self.bank("too_late", "2026-10-26", -400, "GUARDERIA XYZ")   # 23 days after
+        self.bank("too_early", "2026-09-27", -400, "GUARDERIA XYZ")  # 6 days before
+        self.apply([DAYCARE])
+        self.assertEqual((self.row("too_late")["share"], self.row("too_early")["share"]), (1.0, 1.0))
+        self.assertEqual(self.row("tri-d1")["amount"], -200.0)
+
+    def test_a_missing_payment_cannot_steal_the_next_months_payment(self):
+        self.db.conn.execute("DELETE FROM transactions")
+        self.bank("oct", "2026-10-13", -400, "GUARDERIA XYZ")    # only October's payment exists
+        sep = entry("d0", "Daycare September", 400, ME, {ME: 200, PARTNER: 200}, "2026-09-25")  # 18 days before it
+        octo = entry("d1", "Daycare October", 400, ME, {ME: 200, PARTNER: 200}, "2026-10-03")   # 10 days before it
+        self.apply([sep, octo])  # listed september first: the old one-by-one order would have given it to september
+        linked = {r["uuid"]: r["mode"] for r in self.db.conn.execute("SELECT uuid, mode FROM tricount_expenses")}
+        self.assertEqual(linked, {"d1": "linked", "d0": "virtual"})  # the nearest expense wins
+
     def test_two_identical_monthly_expenses_each_take_their_own_payment(self):
         sep = entry("d0", "Daycare", 400, ME, {ME: 200, PARTNER: 200}, "2026-09-03")
         self.apply([DAYCARE, sep])

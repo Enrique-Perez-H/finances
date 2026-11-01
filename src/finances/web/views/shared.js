@@ -6,7 +6,7 @@ export async function render(root) {
   const d = await get('/api/tricount');
   const reload = () => render(root);
   const caution = card('How this works',
-    note('Only your share of a shared expense counts as your spending, whoever paid it. An expense you paid is matched to its bank entry (same amount, nearby date) and that entry then counts at your share. An expense your partner paid appears as an entry for your share. Settling-up payments are ignored: a transfer between you is classified by your own rules.'),
+    note('Only your share of a shared expense counts as your spending, whoever paid it. An expense you paid is matched to its bank entry (same amount, within a few weeks) and that entry then counts at your share. An expense your partner paid appears as an entry for your share. Settling-up payments are ignored: a transfer between you is classified by your own rules.'),
     note('Tricount has no public interface. This reads your group through the same private endpoints its app uses, so it can stop working when Tricount changes them. It never changes your group. Your share link is stored encrypted in this vault only: keep it private, because anyone with it can read and edit the group.'));
 
   if (!d.configured) {
@@ -73,7 +73,7 @@ export async function render(root) {
     note(`${c.account} · ${c.reason}${c.category && c.category !== 'uncategorized' ? ' · ' + c.category : ''}`),
     button('This is it', () => act('/api/tricount/link', {uuid: e.uuid, tx_id: c.id})));
   const unmatched = d.unmatched_mine.length ? card(`Not matched to your bank yet (${d.unmatched_mine.length})`,
-    note('You paid these, but no bank payment was found with the same amount close to the date. They count at your share meanwhile. Pick the bank payment they correspond to, or say there is none.'),
+    note('You paid these, but no bank payment with the same amount was found from 5 days before to 3 weeks after the date. They count at your share meanwhile. Pick the bank payment they correspond to, or say there is none.'),
     ...d.unmatched_mine.map(e => el('div', {className: 'review'},
       el('strong', {textContent: `${e.date} · ${e.description.slice(0, 28)}`}),
       row('You paid, your share', `${eur2(e.total)} → ${eur2(e.my_share)}`),
