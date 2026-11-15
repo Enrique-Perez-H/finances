@@ -6,7 +6,7 @@ from datetime import date
 from http.server import ThreadingHTTPServer
 
 from isolated import IsolatedHome
-from finances import categorize, recurring
+from finances import analysis, categorize, recurring
 from finances.db import Database
 from finances.server import make_handler
 
@@ -124,6 +124,79 @@ class ManualTests(IsolatedHome):
         inc = recurring.mark(self.db, [], name="Garage rent", pattern="alquiler garaje", direction="in")
         self.assertEqual(self.items()[f"manual:{inc}"]["direction"], "in")
         self.assertEqual(self.items()[f"manual:{inc}"]["occurrences"], 1)
+
+
+class AverageMonthTests(IsolatedHome):
+    """Marked recurring costs count at their monthly equivalent in the average month."""
+
+    def setUp(self):
+        super().setUp()
+        self.db = Database("pw")
+        self.db.upsert_account(dict(id="a", provider="t", name="A", kind="cash", currency="EUR",
+                                    balance=0, updated_at="t"))
+        self.n = 0
+        for month in ("2025-07", "2025-08", "2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02",
+                      "2026-03", "2026-04", "2026-05"):
+            self.add(f"{month}-15", -100, "GROCERY STORE", "Groceries")  # 100 a month, nothing else
+
+    def add(self, day, amount, desc, category):
+        self.n += 1
+        self.db.upsert_transaction(dict(id=f"t{self.n}", account_id="a", date=day, amount=amount,
+                                        description=desc, category=category, cat_source="manual"))
+        return f"t{self.n}"
+
+    def avg(self, months=12):
+        return analysis.average_month(self.db, months, today=TODAY)
+
+    def by(self, result):
+        return {c["category"]: c for c in result["categories"]}
+
+    def test_a_yearly_bill_is_a_twelfth_every_month(self):
+        bill = self.add("2025-09-20", -600, "SEGURO COCHE", "Insurance")
+        unmarked = self.avg(12)
+        self.assertEqual(self.by(unmarked)["Insurance"]["average"], round(600 / 11, 2))  # lumpy: depends on the window
+        short = self.avg(6)  # and a 6-month window misses the payment entirely
+        self.assertNotIn("Insurance", self.by(short))
+        recurring.mark(self.db, [bill], name="Car insurance", cadence="yearly")
+        marked = self.avg(6)
+        self.assertEqual(self.by(marked)["Insurance"]["average"], 50.0)
+        self.assertEqual(self.by(marked)["Insurance"]["recurring_part"], 50.0)
+        self.assertEqual(marked["recurring"], [dict(name="Car insurance", monthly=50.0, cadence="yearly", category="Insurance")])
+        self.assertEqual((marked["recurring_total"], marked["total"]), (50.0, 150.0))  # 100 groceries + 50
+
+    def test_the_marked_entries_are_not_counted_twice(self):
+        bill = self.add("2025-09-20", -600, "SEGURO COCHE", "Insurance")
+        recurring.mark(self.db, [bill], name="Car insurance", cadence="yearly")
+        self.assertEqual(self.by(self.avg(12))["Insurance"]["total"], 550.0)  # 11 months x 50, not 600 + 550
+        self.assertAlmostEqual(self.avg(12)["total"], 100 * 11 / 11 + 50, places=2)
+
+    def test_quarterly_and_monthly_items(self):
+        q = self.add("2026-02-10", -90, "COMUNIDAD", "Housing")
+        recurring.mark(self.db, [q], name="Community fees", cadence="quarterly")
+        self.assertEqual(self.by(self.avg(12))["Housing"]["average"], 30.0)  # 90 every three months
+        entries = [self.add(f"{m}-03", -40 - i, "CLEANING", "Home & furniture")
+                   for i, m in enumerate(("2026-03", "2026-04", "2026-05"))]
+        recurring.mark(self.db, entries, name="Cleaning")  # monthly, three months so far
+        cleaning = [r for r in self.avg(12)["recurring"] if r["name"] == "Cleaning"][0]
+        self.assertEqual(cleaning["monthly"], round((40 + 41 + 42) / 3, 2))
+
+    def test_the_recurring_overview_uses_the_same_monthly_equivalent(self):
+        bill = self.add("2025-09-20", -600, "SEGURO COCHE", "Insurance")
+        gid = recurring.mark(self.db, [bill], name="Car insurance", cadence="yearly")
+        item = {i["key"]: i for i in recurring.detect(self.db, TODAY)}[f"manual:{gid}"]
+        self.assertEqual(item["monthly_equivalent"], 50.0)
+
+    def test_income_items_and_empty_items_do_not_change_the_average(self):
+        pay = self.add("2026-03-01", 300, "RENT FROM X", "Other income")
+        recurring.mark(self.db, [pay], name="Tenant")
+        recurring.mark(self.db, [], name="Nothing yet", pattern="zzzzzz")
+        result = self.avg(12)
+        self.assertEqual((result["recurring"], result["total"]), ([], 100.0))
+
+    def test_without_recurring_items_nothing_changes(self):
+        result = self.avg(12)
+        self.assertEqual((result["total"], result["recurring_total"], result["recurring"]), (100.0, 0.0, []))
+        self.assertEqual(self.by(result)["Groceries"]["recurring_part"], 0.0)
 
 
 class ApiTests(IsolatedHome):

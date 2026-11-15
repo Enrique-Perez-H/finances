@@ -1,4 +1,5 @@
 """All computations run locally against the in-memory database."""
+from collections import defaultdict
 from datetime import date
 
 from .categorize import CAPITAL, INTERNAL, UNCATEGORIZED, merchant_key, normalize, suggest_pattern
@@ -28,28 +29,49 @@ def monthly_cashflow(db: Database, months: int = 6, today: date | None = None) -
 
 
 def average_month(db: Database, months: int | None = 12, today: date | None = None) -> dict:
-    """What a typical month looks like: average spending per category over the last
-    `months` completed months (None = all). Months without spending in a category count as zero."""
+    """What a typical month looks like: average spending per category over the last `months`
+    completed months (None = all). Months without spending in a category count as zero.
+
+    Costs you marked as recurring count at their monthly equivalent instead of as the raw entries: a
+    yearly bill is a twelfth every month, a monthly one its average, so the average stays smooth."""
+    from . import recurring  # imported here: recurring reads the same tables
     current = (today or date.today()).isoformat()[:7]
     available = [r[0] for r in db.conn.execute(
         "SELECT DISTINCT substr(date,1,7) m FROM transactions WHERE substr(date,1,7) < ? ORDER BY m DESC",
         (current,))]
     used = available[:months] if months else available
     if not used:
-        return dict(months_used=0, first=None, last=None, total=0.0, categories=[])
+        return dict(months_used=0, first=None, last=None, total=0.0, categories=[], recurring=[], recurring_total=0.0)
+    manual = [g for g in recurring._manual_rows(db).values() if g["direction"] == "out" and g["entries"]]
+    claimed = {e["id"] for g in manual for e in g["entries"]}
     marks = ",".join("?" * len(used))
-    rows = db.conn.execute(
-        f"SELECT category, SUM(-amount) AS total, COUNT(DISTINCT substr(date,1,7)) AS active"
-        f" FROM counted WHERE amount<0 AND category NOT IN (?, ?) AND paired_with = ''"
-        f" AND substr(date,1,7) IN ({marks}) GROUP BY category ORDER BY total DESC",
-        (INTERNAL, CAPITAL, *used)).fetchall()
+    totals, active = defaultdict(float), defaultdict(set)
+    for r in db.conn.execute(
+            f"SELECT id, category, amount, substr(date,1,7) AS m FROM counted WHERE amount<0"
+            f" AND category NOT IN (?, ?) AND paired_with = '' AND substr(date,1,7) IN ({marks})",
+            (INTERNAL, CAPITAL, *used)):
+        if r["id"] not in claimed:
+            totals[r["category"]] += -r["amount"]
+            active[r["category"]].add(r["m"])
     n = len(used)
-    grand = sum(r["total"] for r in rows)
-    return dict(
-        months_used=n, first=min(used), last=max(used), total=round(grand / n, 2),
-        categories=[dict(category=r["category"], average=round(r["total"] / n, 2),
-                         total=round(r["total"], 2), active_months=r["active"],
-                         share=round(r["total"] / grand, 4) if grand else 0) for r in rows])
+    items, recurring_by_category = [], defaultdict(float)
+    for g in manual:
+        item = recurring._manual_item(g, today or date.today(), used)
+        if item["monthly_equivalent"] > 0:
+            items.append(dict(name=item["label"], monthly=item["monthly_equivalent"], cadence=item["cadence"],
+                              category=item["category"]))
+            recurring_by_category[item["category"]] += item["monthly_equivalent"]
+    for category, monthly in recurring_by_category.items():
+        totals[category] += monthly * n  # spread evenly over the months
+        active[category] |= set(used)
+    grand = sum(totals.values())
+    categories = [dict(category=c, average=round(t / n, 2), total=round(t, 2), active_months=len(active[c]),
+                       share=round(t / grand, 4) if grand else 0,
+                       recurring_part=round(recurring_by_category.get(c, 0.0), 2))
+                  for c, t in sorted(totals.items(), key=lambda kv: -kv[1])]
+    items.sort(key=lambda i: -i["monthly"])
+    return dict(months_used=n, first=min(used), last=max(used), total=round(grand / n, 2), categories=categories,
+                recurring=items, recurring_total=round(sum(i["monthly"] for i in items), 2))
 
 
 def spending_by_category(db: Database, month: str | None = None) -> list[dict]:

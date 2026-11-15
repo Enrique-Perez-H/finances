@@ -70,6 +70,7 @@ def _groups(db: Database, exclude: set[str] = frozenset()):
 # --- costs (or incomes) you mark as recurring yourself -----------------------------------------
 
 MANUAL_CADENCES = {"monthly": 30.44, "every two months": 61, "quarterly": 91, "semiannual": 182, "yearly": 365}
+PER_MONTH = {"monthly": 1.0, "every two months": 1 / 2, "quarterly": 1 / 3, "semiannual": 1 / 6, "yearly": 1 / 12}
 
 
 def _manual_rows(db: Database) -> dict[int, dict]:
@@ -112,10 +113,14 @@ def _manual_item(g: dict, today: date, window: list[str]) -> dict:
     last = date.fromisoformat(rows[-1]["date"])
     first_month = rows[0]["date"][:7]
     span = [m for m in window if m >= first_month]  # completed months since it started (at most 12)
-    if span:
+    if g["cadence"] != "monthly":
+        # a yearly bill is a twelfth of its amount every month, whichever months it falls in
+        recent = amounts[-6:]
+        monthly = sum(recent) / len(recent) * PER_MONTH[g["cadence"]]
+    elif span:
         monthly = sum(abs(r["amount"]) for r in rows if r["date"][:7] in span) / len(span)
     else:  # it only exists in the month in progress: no average yet
-        monthly = med * 30.44 / typical
+        monthly = med * PER_MONTH.get(g["cadence"], 1.0)
     category = Counter(r["category"] for r in rows).most_common(1)[0][0]
     return dict(base, category=category, typical_amount=round(med, 2), amount_min=round(min(amounts), 2),
                 amount_max=round(max(amounts), 2), monthly_equivalent=round(monthly, 2), occurrences=len(rows),

@@ -116,6 +116,10 @@ function averageCard(avg, reload) {
   return card('Average month', buttons,
     el('div', {className: 'big', textContent: eur(avg.total)}),
     note(`spent per month on average · ${avg.months_used} completed month${avg.months_used === 1 ? '' : 's'} (${avg.first} to ${avg.last})`),
+    avg.recurring.length ? el('details', {className: 'group'},
+      el('summary', {}, el('span', {textContent: 'Recurring costs included'}), el('span', {textContent: `${eur(avg.recurring_total)}/mo`})),
+      note('Costs you marked as recurring count at their monthly equivalent, so a yearly bill is a twelfth every month. Mark more from Spending → Browse entries.'),
+      ...avg.recurring.map(r => row(`${r.name} · ${r.cadence}`, `${eur2(r.monthly)}/mo`))) : null,
     ...avg.categories.map(c => barRow(c.category, c.average, max, `${eur(c.average)} · ${pct(c.share)}`)),
     note('A month without spending in a category counts as zero. The month in progress, transfers between your accounts, one-off capital items and reimbursed payments are not counted.'));
 }

@@ -21,7 +21,10 @@ function recurringPicker(groups, onChoose) {
     sel.selectedIndex = 0;
     if (value === '__new__') {
       const name = (prompt('Name of this recurring item (e.g. Home cleaning)') || '').trim();
-      if (name) onChoose({name});
+      if (!name) return;
+      const cadence = (prompt('How often does it come? monthly, every two months, quarterly, semiannual or yearly', 'monthly') || 'monthly')
+        .trim().toLowerCase();
+      onChoose({name, cadence});
     } else if (value) onChoose({group_id: Number(value)});
   });
   return sel;
@@ -110,6 +113,7 @@ export function browserCard(cats, months, month) {
         el('span', {textContent: eur2(t.amount), className: t.amount < 0 ? 'neg' : 'pos'})),
       el('div', {className: 'desc', textContent: t.description}),
       t.share < 1 ? el('div', {className: 'muted', textContent: `counts ${Math.round(t.share * 100)}% of ${eur2(Math.abs(t.raw_amount))} (shared)`}) : null,
+      t.raw_amount < 0 ? recurringPicker(manual, extra => markRecurring([t.id], extra)) : null,
       t.raw_amount < 0 ? button(t.share < 1 ? 'Shared ✓ (tap to count all)' : 'Shared: count half', async () => {
         try { await post('/api/share', {tx_ids: [t.id], share: t.share < 1 ? 1 : 0.5}); await load(); }
         catch (e) { alert(e.message); }
