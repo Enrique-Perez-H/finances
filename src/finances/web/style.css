@@ -68,3 +68,5 @@ table.months tr.avg td{font-weight:600}
 input[type=checkbox]{width:18px;height:18px;vertical-align:middle}
 .top{background:var(--bg);border-radius:8px;padding:8px 10px;margin:6px 0}.top .entry{padding:5px 0}
 .row span:last-child{white-space:nowrap}
+.chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+div.warn{color:var(--bad);font-size:.85rem;margin:4px 0}

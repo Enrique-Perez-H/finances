@@ -110,6 +110,10 @@ export function browserCard(cats, months, month) {
         el('span', {textContent: eur2(t.amount), className: t.amount < 0 ? 'neg' : 'pos'})),
       el('div', {className: 'desc', textContent: t.description}),
       t.share < 1 ? el('div', {className: 'muted', textContent: `counts ${Math.round(t.share * 100)}% of ${eur2(Math.abs(t.raw_amount))} (shared)`}) : null,
+      t.raw_amount < 0 ? button(t.share < 1 ? 'Shared ✓ (tap to count all)' : 'Shared: count half', async () => {
+        try { await post('/api/share', {tx_ids: [t.id], share: t.share < 1 ? 1 : 0.5}); await load(); }
+        catch (e) { alert(e.message); }
+      }, t.share < 1 ? 'chip on' : 'chip') : null,
       categoryPicker(cats.filter(c => c !== t.category), c => moveOne(t, c), {current: t.category}));
   };
 

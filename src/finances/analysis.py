@@ -130,8 +130,9 @@ def transactions(db: Database, category: str | None, month: str | None, limit: i
 
 def entries(db: Database, category: str | None = None, since: str | None = None,
             until: str | None = None, q: str | None = None, sort: str = "date",
-            offset: int = 0, limit: int = 50) -> dict:
-    """Browse entries: filter by category (None or '*' = all), dates, and text (accent-insensitive).
+            offset: int = 0, limit: int = 50, direction: str | None = None) -> dict:
+    """Browse entries: filter by category (None or '*' = all), dates, text (accent-insensitive) and
+    direction ('out' = spending only, 'in' = receipts only).
     Reimbursement pairs are left out, they have their own list."""
     sql, args = ("SELECT id, date, amount, description, category, cat_source, share, raw_amount FROM counted"
                  " WHERE paired_with = ''"), []
@@ -144,6 +145,8 @@ def entries(db: Database, category: str | None = None, since: str | None = None,
     if until:
         sql += " AND date <= ?"
         args.append(until)
+    if direction in ("out", "in"):
+        sql += " AND raw_amount < 0" if direction == "out" else " AND raw_amount > 0"
     sql += " ORDER BY " + ("ABS(amount) DESC, date DESC" if sort == "amount" else "date DESC") + ", id"
     needle = normalize(q or "")
     rows = [dict(r) for r in db.conn.execute(sql, args)

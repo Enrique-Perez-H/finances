@@ -70,7 +70,7 @@ GET_ROUTES = {
     "/api/spending": lambda db, q: analysis.spending(db, _q(q, "month")),
     "/api/entries": lambda db, q: analysis.entries(
         db, _q(q, "category"), _q(q, "since"), _q(q, "until"), _q(q, "q"), _q(q, "sort", "date"),
-        int(_num(q, "offset", 0)), int(_num(q, "limit", 50))),
+        int(_num(q, "offset", 0)), int(_num(q, "limit", 50)), _q(q, "direction")),
     "/api/transactions": lambda db, q: analysis.transactions(
         db, _q(q, "category"), _q(q, "month"), int(_num(q, "limit", 200))),
     "/api/income": lambda db, q: income.summary(db, int(_num(q, "months", 12))),
@@ -265,10 +265,6 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                    title=state.get("title", ""), members=state.get("members", []),
                    synced_at=state.get("synced_at"), balance=state.get("balance"))
         out.update(tricount.summary(db))
-        out["aliases"] = tricount.aliases(db)
-        out["suggested_aliases"] = tricount.suggest_aliases(db)
-        out["unmatched_mine"] = [dict(e, candidates=tricount.candidates(db, e["uuid"], 3))
-                                 for e in out["unmatched_mine"][:400]]  # a cheap query each: show them all
         return out
 
     def tricount_post(path: str, body: dict):
@@ -300,35 +296,15 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             secrets["sources"] = [s for s in secrets.get("sources", []) if s != "tricount"]
             persist()
             return {"ok": True}
-        if path == "/api/tricount/ignore":
+        if path == "/api/tricount/choose":
+            uids = body.get("uuids")
+            if not isinstance(uids, list):
+                raise BadRequest("uuids must be a list")
             with lock:
-                tricount.set_ignored(db, str(body.get("uuid", "")), bool(body.get("ignored", True)))
+                n = tricount.choose(db, [str(u) for u in uids], str(body.get("choice", "")))
                 categorize.categorize_all(db)
                 db.save()
-            return {"ok": True}
-        if path in ("/api/tricount/link", "/api/tricount/confirm", "/api/tricount/unlink"):
-            uid = str(body.get("uuid", ""))
-            with lock:
-                if path.endswith("/link"):
-                    tricount.link(db, uid, str(body.get("tx_id", "")))
-                elif path.endswith("/confirm"):
-                    tricount.confirm_elsewhere(db, uid)
-                else:
-                    tricount.unlink(db, uid)
-                db.save()
-            return {"ok": True}
-        if path in ("/api/tricount/alias", "/api/tricount/alias/delete", "/api/tricount/rematch"):
-            with lock:
-                if path.endswith("/rematch"):
-                    result = {"matched": tricount.rematch(db)}
-                elif path.endswith("/delete"):
-                    tricount.delete_alias(db, str(body.get("tri", "")), str(body.get("bank", "")))
-                    result = {"ok": True}
-                else:
-                    tricount.add_alias(db, str(body.get("tri", "")), str(body.get("bank", "")))
-                    result = {"ok": True}
-                db.save()
-            return result
+            return {"changed": n}
         if path == "/api/tricount/sync":
             with sync_lock:
                 status = run_sync(db, secrets, ["tricount"], lock=lock, persist_secrets=lambda s: persist())
@@ -385,14 +361,6 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
             if not self._host_ok():
                 return self._json(403, {"error": "forbidden host"})
             url = urllib.parse.urlparse(self.path)
-            if url.path == "/api/tricount/search":
-                q = urllib.parse.parse_qs(url.query)
-                try:
-                    with lock:
-                        return self._json(200, tricount.search_payments(
-                            db, _q(q, "uuid", ""), _q(q, "q", ""), int(_num(q, "days", 90))))
-                except (BadRequest, ValueError) as e:
-                    return self._json(400, {"error": str(e)})
             if url.path == "/api/tricount":
                 with lock:
                     return self._json(200, tricount_status())

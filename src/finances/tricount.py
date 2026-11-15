@@ -5,12 +5,12 @@ a group through its share link, so it can break whenever Tricount changes them. 
 edits or deletes anything in your group. The link is kept only in the encrypted vault: anyone
 holding it can read and edit the group.
 
-What it does with your own books:
-* only YOUR share of every expense counts as your spending, whoever paid;
-* an expense you paid is matched to the bank entry (same amount, nearby date) and that entry
-  then counts at your share, e.g. half of the daycare;
-* an expense your partner paid appears as a virtual entry for your share, e.g. half of the gas;
-* settling-up payments are ignored: a transfer between you is categorised by your own rules.
+Your bank entries stay the source of truth: they count in full unless you split them. Tricount
+expenses are only a list to review. Nothing from Tricount counts until you choose, for each one:
+* shared: your share of it is added to your spending (for what your partner paid, or cash...);
+* only yours: all of it is added;
+* already in my bank: left out, because the bank entry already counts it.
+Settling-up payments are ignored: a transfer between you is categorised by your own rules.
 """
 import json
 import re
@@ -23,7 +23,6 @@ from datetime import date, datetime, timedelta, timezone
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from .categorize import GENERIC_PATTERNS, merchant_key, normalize, suggest_pattern
 from .connectors.base import ConnectorError
 from .db import Database
 
@@ -31,8 +30,7 @@ BASE_URL = "https://api.tricount.bunq.com"
 # The private API only answers clients that look like the official app.
 USER_AGENT = "com.bunq.tricount.android:RELEASE:7.0.7:3174:ANDROID:13:C"
 ACCOUNT_ID = "tricount-shared"
-MATCH_DAYS_BEFORE, MATCH_DAYS_AFTER = 5, 21  # bank payments usually post days after the expense is logged
-ALIAS_DAYS_BEFORE, ALIAS_DAYS_AFTER = 10, 35  # wider when you told us how the payee appears in the bank
+DUPLICATE_DAYS_BEFORE, DUPLICATE_DAYS_AFTER = 5, 30  # where to look for a bank payment that already counts it
 CATEGORY_HINTS = {
     "GROCERIES": "Groceries", "FOOD_AND_DRINK": "Restaurants & bars", "TRANSPORT": "Transport",
     "HEALTHCARE": "Health", "INSURANCE": "Insurance", "SHOPPING": "Shopping", "ENTERTAINMENT": "Leisure",
@@ -220,221 +218,118 @@ class TricountClient:
         return parse_registry(data)
 
 
-# --- applying it to your books -----------------------------------------------------------------
+# --- your books: only what you choose ---------------------------------------------------------
+
+CHOICES = ("", "shared", "mine", "skip")
+
 
 def _virtual_id(uid: str) -> str:
     return f"tri-{uid}"
 
 
 def _ensure_account(db: Database, now: str) -> None:
-    db.upsert_account(dict(id=ACCOUNT_ID, provider="tricount", name="Shared costs paid by others", kind="shared",
+    db.upsert_account(dict(id=ACCOUNT_ID, provider="tricount", name="Added from Tricount", kind="shared",
                            currency="EUR", balance=0.0, updated_at=now))
-
-
-def _linked_ids(db: Database, ignoring: str = "") -> set[str]:
-    return {r["tx_id"] for r in db.conn.execute(
-        "SELECT tx_id FROM tricount_expenses WHERE mode='linked' AND uuid != ?", (ignoring,))}
-
-
-_MONTHS = {"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "setiembre",
-           "octubre", "noviembre", "diciembre", "january", "february", "march", "april", "may", "june", "july",
-           "august", "september", "october", "november", "december", "gener", "febrer", "marc", "maig", "juny",
-           "juliol", "setembre", "octubre", "novembre", "desembre"}
-
-
-def tri_key(description: str) -> str:
-    """How you call an expense in Tricount, without months and numbers: 'Fibra octubre 2026' -> 'fibra'."""
-    words = [w for w in normalize(description).split() if not any(c.isdigit() for c in w) and w not in _MONTHS]
-    return " ".join(words) or normalize(description)
-
-
-def _has_words(text: str, words: str) -> bool:
-    return bool(words) and f" {words} " in f" {text} "
-
-
-def _alias_patterns(db: Database, description: str) -> list[str]:
-    """The bank texts you associated with this kind of expense."""
-    text = normalize(description)
-    return [r["bank_pattern"] for r in db.conn.execute("SELECT tri_key, bank_pattern FROM tricount_aliases")
-            if _has_words(text, r["tri_key"])]
-
-
-def _window_pairs(db: Database, expenses: list[dict], taken: set[str]) -> list[tuple]:
-    """Every (expense, bank payment) that could belong together: same amount (a cent of slack), the
-    payment inside the date window, or inside the wider one when its text matches a hint you gave.
-    Sorted best first: nearest date, then closest amount."""
-    pairs = []
-    for e in expenses:
-        d = date.fromisoformat(e["date"])
-        patterns = _alias_patterns(db, e.get("description", ""))
-        lo, hi = d - timedelta(days=MATCH_DAYS_BEFORE), d + timedelta(days=MATCH_DAYS_AFTER)
-        a_lo, a_hi = d - timedelta(days=ALIAS_DAYS_BEFORE), d + timedelta(days=ALIAS_DAYS_AFTER)
-        tolerance = max(0.01, 0.005 * e["total"])
-        wide = (a_lo, a_hi) if patterns else (lo, hi)
-        for r in db.conn.execute(
-                "SELECT id, date, amount, description FROM transactions WHERE amount < 0 AND account_id != ?"
-                " AND date BETWEEN ? AND ? AND paired_with = ''", (ACCOUNT_ID, wide[0].isoformat(), wide[1].isoformat())):
-            diff = abs(abs(r["amount"]) - e["total"])
-            if diff > tolerance or r["id"] in taken:
-                continue
-            rd = date.fromisoformat(r["date"])
-            if not (lo <= rd <= hi):  # outside the usual window: only for a payee you named
-                text = normalize(r["description"])
-                if not any(_has_words(text, p) for p in patterns):
-                    continue
-            pairs.append((abs((rd - d).days), diff, r["id"], e["uuid"]))
-    pairs.sort()
-    return pairs
-
-
-def assign_matches(db: Database, expenses: list[dict], taken: set[str]) -> dict[str, str]:
-    """One bank payment per expense, decided together: the closest pairs are settled first, so two
-    similar monthly expenses cannot steal each other's payment. Returns {expense uuid: bank entry id}."""
-    chosen, used_tx = {}, set()
-    for _, _, tx_id, uid in _window_pairs(db, expenses, taken):
-        if uid not in chosen and tx_id not in used_tx:
-            chosen[uid] = tx_id
-            used_tx.add(tx_id)
-    return chosen
-
-
-def find_bank_match(db: Database, day: str, total: float, taken: set[str]) -> str | None:
-    """The best bank payment for one expense, or None."""
-    return assign_matches(db, [dict(uuid="?", date=day, total=total)], taken).get("?")
-
-
-def _set_share(db: Database, tx_id: str, share: float) -> None:
-    db.conn.execute("UPDATE transactions SET share=?, share_source='tricount' WHERE id=?", (round(share, 6), tx_id))
-
-
-def _clear_share(db: Database, tx_id: str) -> None:
-    db.conn.execute("UPDATE transactions SET share=1.0, share_source='' WHERE id=? AND share_source='tricount'", (tx_id,))
 
 
 def _drop_virtual(db: Database, uid: str) -> None:
     db.conn.execute("DELETE FROM transactions WHERE id=?", (_virtual_id(uid),))
 
 
-def _put_virtual(db: Database, e: dict) -> None:
-    hint = CATEGORY_HINTS.get(e["category"])
-    db.upsert_transaction(dict(id=_virtual_id(e["uuid"]), account_id=ACCOUNT_ID, date=e["date"],
-                               amount=-e["my_share"], description=e["description"] or "Shared cost",
+def _put_virtual(db: Database, row: dict, now: str) -> None:
+    """The entry that makes a chosen Tricount expense count: your share, or all of it."""
+    _drop_virtual(db, row["uuid"])  # re-created so a changed date or amount follows the group
+    amount = row["my_share"] if row["choice"] == "shared" else row["total"]
+    if amount <= 0.004:
+        return
+    _ensure_account(db, now)
+    hint = CATEGORY_HINTS.get(row["category"])
+    db.upsert_transaction(dict(id=_virtual_id(row["uuid"]), account_id=ACCOUNT_ID, date=row["date"],
+                               amount=-round(amount, 2), description=row["description"] or "Shared cost",
                                category=hint or "uncategorized", cat_source="connector" if hint else ""))
 
 
-def apply(db: Database, expenses: list[dict], now: str) -> dict:
-    """Bring the books in line with the group. Safe to run again and again."""
-    _ensure_account(db, now)
+def store(db: Database, expenses: list[dict], now: str) -> dict:
+    """Keep the list of Tricount expenses up to date. New ones start as 'to review': nothing about
+    your figures changes until you choose. Choices already made follow edits made in the group."""
     stored = {r["uuid"]: dict(r) for r in db.conn.execute("SELECT * FROM tricount_expenses")}
-    seen, records, pending = set(), {}, []
-    for e in expenses:  # pass 1: everything that does not need a match decided with the others
+    seen = set()
+    for e in expenses:
         seen.add(e["uuid"])
-        row = stored.get(e["uuid"])
-        mine = e["my_share"]
-        ignored = bool(row["ignored"]) if row else False
-        pinned = bool(row["pinned"]) if row else False
-        if pinned and row["mode"] == "linked" and not db.conn.execute(
-                "SELECT 1 FROM transactions WHERE id=?", (row["tx_id"],)).fetchone():
-            pinned = False  # the bank entry is gone: start again
-        changed = bool(row) and not pinned and (abs(row["total"] - e["total"]) > 0.004 or row["date"] != e["date"])
-        mode, tx_id = (row["mode"], row["tx_id"]) if row and not changed else ("", "")
-        if row and changed:  # the group edited it: forget the old matching and start again
-            if row["mode"] == "linked":
-                _clear_share(db, row["tx_id"])
-            _drop_virtual(db, e["uuid"])
-        if ignored or mine <= 0.004:
-            if mode == "linked":
-                _clear_share(db, tx_id)
-            _drop_virtual(db, e["uuid"])
-            mode, tx_id = "", ""
-        elif pinned and mode == "linked":  # you confirmed it: only the share may change
-            _set_share(db, tx_id, mine / e["total"])
-        elif pinned and mode == "virtual":  # you said it was paid elsewhere
-            _put_virtual(db, e)
-        elif e["payer_is_me"]:
-            if mode == "linked" and db.conn.execute("SELECT 1 FROM transactions WHERE id=?", (tx_id,)).fetchone():
-                _set_share(db, tx_id, mine / e["total"])
-            else:
-                pending.append(e)
-                mode, tx_id = "", ""
-        else:
-            _put_virtual(db, e)
-            mode, tx_id = "virtual", _virtual_id(e["uuid"])
-        records[e["uuid"]] = dict(e=e, ignored=ignored, pinned=pinned and mode != "", mode=mode, tx_id=tx_id)
-    # pass 2: match what you paid to bank payments, all together
-    taken = {r["tx_id"] for r in records.values() if r["mode"] == "linked"}
-    matches = assign_matches(db, pending, taken | {r["tx_id"] for u, r in stored.items()
-                                                     if r["mode"] == "linked" and u not in seen})
-    for e in pending:
-        rec = records[e["uuid"]]
-        if e["uuid"] in matches:
-            _drop_virtual(db, e["uuid"])
-            _set_share(db, matches[e["uuid"]], e["my_share"] / e["total"])
-            rec.update(mode="linked", tx_id=matches[e["uuid"]])
-        else:
-            _put_virtual(db, e)  # paid from somewhere not synced: your share still counts
-            rec.update(mode="virtual", tx_id=_virtual_id(e["uuid"]))
-    for uid, rec in records.items():
-        e = rec["e"]
+        payer = "me" if e["payer_is_me"] else "other"
+        choice = stored[e["uuid"]]["choice"] if e["uuid"] in stored else ""
         db.conn.execute(
-            "INSERT INTO tricount_expenses(uuid, date, description, total, my_share, payer, ignored, tx_id, mode, pinned, category)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(uuid) DO UPDATE SET date=excluded.date,"
+            "INSERT INTO tricount_expenses(uuid, date, description, total, my_share, payer, category, choice)"
+            " VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(uuid) DO UPDATE SET date=excluded.date,"
             " description=excluded.description, total=excluded.total, my_share=excluded.my_share,"
-            " payer=excluded.payer, tx_id=excluded.tx_id, mode=excluded.mode, pinned=excluded.pinned,"
-            " category=excluded.category",
-            (uid, e["date"], e["description"], e["total"], e["my_share"], "me" if e["payer_is_me"] else "other",
-             int(rec["ignored"]), rec["tx_id"], rec["mode"], int(rec["pinned"]), e["category"]))
-    for uid, row in stored.items():  # deleted in the group
+            " payer=excluded.payer, category=excluded.category",
+            (e["uuid"], e["date"], e["description"], e["total"], e["my_share"], payer, e["category"], choice))
+        if choice in ("shared", "mine"):
+            _put_virtual(db, dict(uuid=e["uuid"], date=e["date"], description=e["description"], total=e["total"],
+                                  my_share=e["my_share"], category=e["category"], choice=choice), now)
+    for uid in stored:  # deleted in the group
         if uid not in seen:
-            if row["mode"] == "linked":
-                _clear_share(db, row["tx_id"])
             _drop_virtual(db, uid)
             db.conn.execute("DELETE FROM tricount_expenses WHERE uuid=?", (uid,))
     return summary(db)
 
 
-def rematch(db: Database) -> int:
-    """Bank entries that arrived after the expense was logged: turn virtual entries into matches."""
-    rows = db.conn.execute("SELECT * FROM tricount_expenses WHERE mode='virtual' AND payer='me' AND ignored=0"
-                           " AND pinned=0").fetchall()
-    matches = assign_matches(db, [dict(uuid=r["uuid"], date=r["date"], total=r["total"],
-                                       description=r["description"]) for r in rows], _linked_ids(db))
-    by_uuid = {r["uuid"]: r for r in rows}
-    for uid, tx_id in matches.items():
-        r = by_uuid[uid]
-        _drop_virtual(db, uid)
-        _set_share(db, tx_id, r["my_share"] / r["total"])
-        db.conn.execute("UPDATE tricount_expenses SET mode='linked', tx_id=? WHERE uuid=?", (tx_id, uid))
-    return len(matches)
+def choose(db: Database, uids: list[str], choice: str, now: str | None = None) -> int:
+    """Decide what an expense does to your figures: 'shared', 'mine', 'skip', or '' to take it back."""
+    if choice not in CHOICES:
+        raise ValueError("choose shared, mine, skip, or nothing to undo")
+    if not uids or len(uids) > 500:
+        raise ValueError("select between 1 and 500 expenses")
+    now = now or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    n = 0
+    for uid in uids:
+        row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (str(uid),)).fetchone()
+        if not row:
+            raise ValueError("unknown Tricount expense")
+        db.conn.execute("UPDATE tricount_expenses SET choice=? WHERE uuid=?", (choice, row["uuid"]))
+        if choice in ("shared", "mine"):
+            _put_virtual(db, dict(row, choice=choice), now)
+        else:
+            _drop_virtual(db, row["uuid"])
+        n += 1
+    return n
 
 
-def set_ignored(db: Database, uid: str, ignored: bool) -> None:
-    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
-    if not row:
-        raise ValueError("unknown Tricount expense")
-    db.conn.execute("UPDATE tricount_expenses SET ignored=? WHERE uuid=?", (int(ignored), uid))
-    if ignored:
-        if row["mode"] == "linked":
-            _clear_share(db, row["tx_id"])
-        _drop_virtual(db, uid)
-        db.conn.execute("UPDATE tricount_expenses SET mode='', tx_id='' WHERE uuid=?", (uid,))
+def in_bank(db: Database, row: dict) -> dict | None:
+    """A bank payment that probably already counts this expense (same amount, nearby date), so you do
+    not add it twice. Only a hint: nothing is matched or changed."""
+    if row["payer"] != "me":
+        return None  # your partner paid it: it cannot be in your bank
+    d = date.fromisoformat(row["date"])
+    lo, hi = d - timedelta(days=DUPLICATE_DAYS_BEFORE), d + timedelta(days=DUPLICATE_DAYS_AFTER)
+    tolerance = max(0.01, 0.005 * row["total"])
+    best = None
+    for r in db.conn.execute(
+            "SELECT id, date, amount, description FROM transactions WHERE amount < 0 AND account_id != ?"
+            " AND date BETWEEN ? AND ? AND paired_with = ''", (ACCOUNT_ID, lo.isoformat(), hi.isoformat())):
+        diff = abs(abs(r["amount"]) - row["total"])
+        if diff <= tolerance:
+            key = (abs((date.fromisoformat(r["date"]) - d).days), diff, r["id"])
+            if best is None or key < best[0]:
+                best = (key, dict(id=r["id"], date=r["date"], amount=r["amount"], description=r["description"][:60]))
+    return best[1] if best else None
 
 
 def summary(db: Database) -> dict:
-    rows = [dict(r) for r in db.conn.execute("SELECT * FROM tricount_expenses ORDER BY date DESC, uuid")]
-    return dict(
-        expenses=rows, count=len(rows),
-        linked=sum(r["mode"] == "linked" for r in rows), virtual=sum(r["mode"] == "virtual" for r in rows),
-        confirmed_elsewhere=sum(r["mode"] == "virtual" and r["pinned"] == 1 and r["payer"] == "me" for r in rows),
-        unmatched_mine=[r for r in rows if r["mode"] == "virtual" and r["payer"] == "me" and not r["pinned"]
-                        and not r["ignored"]],
-        ignored=sum(bool(r["ignored"]) for r in rows),
-        my_total=round(sum(r["my_share"] for r in rows if not r["ignored"]), 2))
+    rows = [dict(r) for r in db.conn.execute(
+        "SELECT uuid, date, description, total, my_share, payer, category, choice FROM tricount_expenses"
+        " ORDER BY date DESC, uuid")]
+    for r in rows:
+        r["in_bank"] = in_bank(db, r) if r["choice"] in ("", "shared", "mine") else None
+    counted = sum(r["my_share"] if r["choice"] == "shared" else r["total"] for r in rows if r["choice"] in ("shared", "mine"))
+    return dict(expenses=rows, count=len(rows), pending=sum(r["choice"] == "" for r in rows),
+                shared=sum(r["choice"] == "shared" for r in rows), mine=sum(r["choice"] == "mine" for r in rows),
+                skipped=sum(r["choice"] == "skip" for r in rows), counted_total=round(counted, 2))
 
 
 def sync(db: Database, state: dict, client: TricountClient | None = None, now: datetime | None = None,
          lock=None) -> dict:
-    """Read the group and update the books. `state` is secrets["tricount"] (token, me, ...)."""
+    """Read the group and refresh the list. `state` is secrets["tricount"] (token, me, ...)."""
     import contextlib
     if not state.get("token") or not state.get("me"):
         raise TricountError("connect a Tricount first (Shared tab)")
@@ -447,200 +342,27 @@ def sync(db: Database, state: dict, client: TricountClient | None = None, now: d
         raise TricountError("you are no longer a member of that group: choose who you are again")
     result = evaluate(parsed, state["me"])
     with (lock or contextlib.nullcontext()):
-        out = apply(db, result["expenses"], now.isoformat(timespec="seconds"))
+        out = store(db, result["expenses"], now.isoformat(timespec="seconds"))
     state.update(synced_at=now.isoformat(timespec="minutes"), balance=result["balance"], title=parsed["title"],
                  members=parsed["members"])
     return out
 
 
 def disconnect(db: Database) -> None:
-    """Forget the group: every entry goes back to counting in full, virtual entries disappear."""
-    db.conn.execute("UPDATE transactions SET share=1.0, share_source='' WHERE share_source='tricount'")
+    """Forget the group: what you added from it disappears. Bank entries you split by hand stay split."""
     db.conn.execute("DELETE FROM transactions WHERE account_id=?", (ACCOUNT_ID,))
     db.conn.execute("DELETE FROM accounts WHERE id=?", (ACCOUNT_ID,))
     db.conn.execute("DELETE FROM tricount_expenses")
 
 
 def set_share(db: Database, tx_ids: list[str], share: float) -> int:
-    """Count only part of some bank entries as yours (shared by hand, no Tricount needed)."""
+    """Count only part of some bank entries as yours (shared by hand): 0.5 = half, 1 = all of it."""
     if not 0 <= share <= 1:
         raise ValueError("share must be between 0 and 1")
     if not tx_ids or len(tx_ids) > 500:
         raise ValueError("select between 1 and 500 entries")
     marks = ",".join("?" * len(tx_ids))
-    if db.conn.execute(f"SELECT 1 FROM transactions WHERE id IN ({marks}) AND share_source='tricount'", tx_ids).fetchone():
-        raise ValueError("some of those are matched to a Tricount expense: change it in Tricount")
     cur = db.conn.execute(
         f"UPDATE transactions SET share=?, share_source=? WHERE id IN ({marks}) AND account_id != ?",
         (share, "" if share == 1 else "manual", *tx_ids, ACCOUNT_ID))
     return cur.rowcount
-
-
-# --- confirming matches by hand ---------------------------------------------------------------
-
-CANDIDATE_DAYS = 45
-CANDIDATE_MAX_AMOUNT_DIFF = 0.30  # the bank amount may differ from the group's total by up to 30%
-
-
-def candidates(db: Database, uid: str, limit: int = 4) -> list[dict]:
-    """Bank payments that could be this expense, best first: close amount, close date, shared words."""
-    from .categorize import normalize
-    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
-    if not row:
-        raise ValueError("unknown Tricount expense")
-    day = date.fromisoformat(row["date"])
-    taken = _linked_ids(db, uid)
-    words = set(normalize(row["description"]).split())
-    patterns = _alias_patterns(db, row["description"])
-    out = []
-    for r in db.conn.execute(
-            "SELECT b.id, b.date, b.amount, b.description, b.category, a.name AS account FROM transactions b"
-            " JOIN accounts a ON a.id = b.account_id WHERE b.amount < 0 AND b.account_id != ? AND b.paired_with = ''"
-            " AND b.date BETWEEN ? AND ?",
-            (ACCOUNT_ID, (day - timedelta(days=CANDIDATE_DAYS)).isoformat(), (day + timedelta(days=CANDIDATE_DAYS)).isoformat())):
-        if r["id"] in taken:
-            continue
-        diff = abs(r["amount"]) - row["total"]
-        rel = abs(diff) / row["total"] if row["total"] else 1.0
-        if rel > CANDIDATE_MAX_AMOUNT_DIFF:
-            continue
-        days = (date.fromisoformat(r["date"]) - day).days
-        shared_words = words & set(normalize(r["description"]).split())
-        hinted = any(_has_words(normalize(r["description"]), p) for p in patterns)
-        score = rel * 20 + abs(days) / 15 - (0.15 if shared_words else 0) - (0.5 if hinted else 0)  # amount, date, then text
-        how = "same amount" if abs(diff) < 0.005 else f"{'more' if diff > 0 else 'less'} by {abs(diff):.2f}"
-        when = "same day" if days == 0 else f"{abs(days)} day{'s' if abs(days) != 1 else ''} {'later' if days > 0 else 'earlier'}"
-        out.append(dict(id=r["id"], date=r["date"], amount=r["amount"], description=r["description"][:70],
-                        category=r["category"], account=r["account"], score=round(score, 3),
-                        reason=f"{how}, {when}" + (", matches your hint" if hinted else ", similar text" if shared_words else "")))
-    out.sort(key=lambda c: (c["score"], c["date"], c["id"]))
-    return out[:limit]
-
-
-def link(db: Database, uid: str, tx_id: str) -> None:
-    """You confirm this bank payment is the expense. Its share is applied and the match is never redone."""
-    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
-    if not row:
-        raise ValueError("unknown Tricount expense")
-    if row["payer"] != "me":
-        raise ValueError("only expenses you paid can be matched to your bank")
-    tx = db.conn.execute("SELECT id, amount, account_id FROM transactions WHERE id=?", (tx_id,)).fetchone()
-    if not tx or tx["amount"] >= 0 or tx["account_id"] == ACCOUNT_ID:
-        raise ValueError("choose one of your bank payments")
-    if tx_id in _linked_ids(db, uid):
-        raise ValueError("that payment is already matched to another expense")
-    if row["mode"] == "linked":
-        _clear_share(db, row["tx_id"])
-    _drop_virtual(db, uid)
-    _set_share(db, tx_id, (row["my_share"] / row["total"]) if row["total"] else 1.0)
-    db.conn.execute("UPDATE tricount_expenses SET mode='linked', tx_id=?, pinned=1, ignored=0 WHERE uuid=?", (tx_id, uid))
-    bank = db.conn.execute("SELECT description FROM transactions WHERE id=?", (tx_id,)).fetchone()
-    learn(db, row["description"], bank["description"])
-
-
-def confirm_elsewhere(db: Database, uid: str) -> None:
-    """There is no bank entry (paid in cash, another account): keep counting your share, stop asking."""
-    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
-    if not row:
-        raise ValueError("unknown Tricount expense")
-    if row["mode"] == "linked":
-        _clear_share(db, row["tx_id"])
-    _put_virtual(db, dict(uuid=uid, date=row["date"], description=row["description"], my_share=row["my_share"],
-                          category=row["category"]))
-    db.conn.execute("UPDATE tricount_expenses SET mode='virtual', tx_id=?, pinned=1, ignored=0 WHERE uuid=?",
-                    (_virtual_id(uid), uid))
-
-
-def unlink(db: Database, uid: str) -> None:
-    """Undo a confirmation: back to a virtual entry that can be matched again."""
-    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
-    if not row:
-        raise ValueError("unknown Tricount expense")
-    if row["mode"] == "linked":
-        _clear_share(db, row["tx_id"])
-    _put_virtual(db, dict(uuid=uid, date=row["date"], description=row["description"], my_share=row["my_share"],
-                          category=row["category"]))
-    db.conn.execute("UPDATE tricount_expenses SET mode='virtual', tx_id=?, pinned=0 WHERE uuid=?", (_virtual_id(uid), uid))
-
-
-def search_payments(db: Database, uid: str, q: str = "", days: int = 90, limit: int = 15) -> list[dict]:
-    """Look through your bank payments by hand when the suggestions are not the right ones: any amount,
-    around the expense's date, optionally containing some words (accents and capitals ignored)."""
-    from .categorize import normalize
-    row = db.conn.execute("SELECT * FROM tricount_expenses WHERE uuid=?", (uid,)).fetchone()
-    if not row:
-        raise ValueError("unknown Tricount expense")
-    day = date.fromisoformat(row["date"])
-    days = max(1, min(int(days), 365))
-    needle = normalize(q or "")
-    taken = _linked_ids(db, uid)
-    out = []
-    for r in db.conn.execute(
-            "SELECT b.id, b.date, b.amount, b.description, b.category, a.name AS account FROM transactions b"
-            " JOIN accounts a ON a.id = b.account_id WHERE b.amount < 0 AND b.account_id != ? AND b.paired_with = ''"
-            " AND b.date BETWEEN ? AND ?",
-            (ACCOUNT_ID, (day - timedelta(days=days)).isoformat(), (day + timedelta(days=days)).isoformat())):
-        if r["id"] in taken or (needle and needle not in normalize(r["description"])):
-            continue
-        diff = abs(r["amount"]) - row["total"]
-        gap = (date.fromisoformat(r["date"]) - day).days
-        how = "same amount" if abs(diff) < 0.005 else f"{'more' if diff > 0 else 'less'} by {abs(diff):.2f}"
-        when = "same day" if gap == 0 else f"{abs(gap)} day{'s' if abs(gap) != 1 else ''} {'later' if gap > 0 else 'earlier'}"
-        out.append(dict(id=r["id"], date=r["date"], amount=r["amount"], description=r["description"][:70],
-                        category=r["category"], account=r["account"], reason=f"{how}, {when}",
-                        _key=(abs(abs(diff)) if not needle else abs(gap), abs(gap), r["id"])))
-    out.sort(key=lambda c: c["_key"])
-    for c in out:
-        del c["_key"]
-    return out[:limit]
-
-
-# --- hints: what your Tricount words mean in the bank ------------------------------------------
-
-def _bank_pattern(bank_description: str) -> str:
-    return suggest_pattern(merchant_key(bank_description) or normalize(bank_description), bank_description)
-
-
-def _usable(tri: str, bank: str) -> bool:
-    return (len(tri) >= 3 and len(bank) >= 3 and bank not in GENERIC_PATTERNS and tri not in GENERIC_PATTERNS)
-
-
-def learn(db: Database, tri_description: str, bank_description: str) -> None:
-    """You confirmed a match: remember how this expense shows up in the bank, for next time."""
-    tri, bank = tri_key(tri_description), _bank_pattern(bank_description)
-    if _usable(tri, bank):
-        db.conn.execute("INSERT INTO tricount_aliases(tri_key, bank_pattern, uses, source) VALUES(?,?,1,'learned')"
-                        " ON CONFLICT(tri_key, bank_pattern) DO UPDATE SET uses = uses + 1", (tri, bank))
-
-
-def add_alias(db: Database, tri: str, bank: str) -> None:
-    tri, bank = normalize(tri), normalize(bank)
-    if not _usable(tri, bank):
-        raise ValueError("give at least 3 letters on each side, and not a word like 'transferencia'")
-    db.conn.execute("INSERT INTO tricount_aliases(tri_key, bank_pattern, uses, source) VALUES(?,?,0,'manual')"
-                    " ON CONFLICT(tri_key, bank_pattern) DO UPDATE SET source='manual'", (tri, bank))
-
-
-def delete_alias(db: Database, tri: str, bank: str) -> None:
-    db.conn.execute("DELETE FROM tricount_aliases WHERE tri_key=? AND bank_pattern=?", (normalize(tri), normalize(bank)))
-
-
-def aliases(db: Database) -> list[dict]:
-    return [dict(r) for r in db.conn.execute(
-        "SELECT tri_key, bank_pattern, uses, source FROM tricount_aliases ORDER BY tri_key, bank_pattern")]
-
-
-def suggest_aliases(db: Database, min_uses: int = 2, limit: int = 20) -> list[dict]:
-    """Pairs seen in at least two of your matched expenses (e.g. 'mercadona' paid at 'mercadona')
-    that are not hints yet. Repetition makes a coincidence of amounts unlikely."""
-    known = {(a["tri_key"], a["bank_pattern"]) for a in aliases(db)}
-    counts = {}
-    for r in db.conn.execute(
-            "SELECT e.description AS tri, t.description AS bank FROM tricount_expenses e"
-            " JOIN transactions t ON t.id = e.tx_id WHERE e.mode = 'linked'"):
-        pair = (tri_key(r["tri"]), _bank_pattern(r["bank"]))
-        if _usable(*pair) and pair not in known:
-            counts[pair] = counts.get(pair, 0) + 1
-    out = [dict(tri_key=t, bank_pattern=b, seen=n) for (t, b), n in counts.items() if n >= min_uses]
-    out.sort(key=lambda s: (-s["seen"], s["tri_key"]))
-    return out[:limit]

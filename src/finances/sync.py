@@ -31,11 +31,9 @@ def run_sync(db: Database, secrets: dict, names: list[str], inputs: dict | None 
                 with lock:
                     categorize_all(db)
                     db.save()
-                status[name] = {"state": "ok", "expenses": out["count"], "matched": out["linked"],
-                                "virtual": out["virtual"]}
-                if out["unmatched_mine"]:
-                    status[name]["note"] = (f"{len(out['unmatched_mine'])} expenses you paid had no matching bank "
-                                            "entry yet and count at your share; they match automatically when it arrives.")
+                status[name] = {"state": "ok", "expenses": out["count"], "to_review": out["pending"]}
+                if out["pending"]:
+                    status[name]["note"] = f"{out['pending']} Tricount expenses wait for your choice in the Shared tab."
             except ConnectorError as e:
                 status[name] = {"state": "error", "error": f"{type(e).__name__}: {e}"}
             except Exception as e:
@@ -68,7 +66,6 @@ def run_sync(db: Database, secrets: dict, names: list[str], inputs: dict | None 
                 db.upsert_transaction(t)
             for account_id, rows in snap.holdings.items():
                 db.replace_holdings(account_id, rows)
-            tricount.rematch(db)  # a bank entry that arrives later gets matched to its shared expense
             categorize_all(db)
             history.snapshot(db)
             db.save()

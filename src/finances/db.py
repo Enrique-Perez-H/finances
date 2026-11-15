@@ -56,18 +56,8 @@ CREATE TABLE IF NOT EXISTS tricount_expenses (
     total REAL NOT NULL,           -- what was paid, all of it
     my_share REAL NOT NULL,        -- the part that is yours
     payer TEXT NOT NULL,           -- 'me' or 'other'
-    ignored INTEGER NOT NULL DEFAULT 0,      -- you chose to leave it out
-    tx_id TEXT NOT NULL DEFAULT '',          -- the bank entry it is matched to, or the virtual entry
-    mode TEXT NOT NULL DEFAULT '',           -- 'linked' (bank entry) | 'virtual' | ''
-    pinned INTEGER NOT NULL DEFAULT 0,       -- you confirmed the match (or "paid elsewhere"): never redone
-    category TEXT NOT NULL DEFAULT ''        -- Tricount's own category
-);
-CREATE TABLE IF NOT EXISTS tricount_aliases (
-    tri_key TEXT NOT NULL,         -- words in how you log the expense in Tricount, e.g. 'repostaje'
-    bank_pattern TEXT NOT NULL,    -- words in how it shows in the bank, e.g. 'repsol'
-    uses INTEGER NOT NULL DEFAULT 1,
-    source TEXT NOT NULL DEFAULT 'manual',   -- 'manual' | 'learned'
-    PRIMARY KEY (tri_key, bank_pattern)
+    category TEXT NOT NULL DEFAULT '',       -- Tricount's own category
+    choice TEXT NOT NULL DEFAULT ''          -- '' to review | 'shared' | 'mine' | 'skip' (already in the bank)
 );
 CREATE TABLE IF NOT EXISTS recurring_manual (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,10 +135,16 @@ class Database:
                 ALTER TABLE rules_new RENAME TO rules;""")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(transactions)")}
         tri = {r["name"] for r in self.conn.execute("PRAGMA table_info(tricount_expenses)")}
-        if "pinned" not in tri:
-            self.conn.execute("ALTER TABLE tricount_expenses ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         if "category" not in tri:
             self.conn.execute("ALTER TABLE tricount_expenses ADD COLUMN category TEXT NOT NULL DEFAULT ''")
+        if "choice" not in tri:
+            self.conn.execute("ALTER TABLE tricount_expenses ADD COLUMN choice TEXT NOT NULL DEFAULT ''")
+            if "mode" in tri:  # an older version matched expenses to bank entries by itself: keep what counted
+                self.conn.execute(
+                    "UPDATE tricount_expenses SET choice = CASE WHEN ignored = 1 THEN 'skip'"
+                    " WHEN mode = 'linked' THEN 'skip' WHEN mode = 'virtual' THEN 'shared' ELSE '' END")
+                self.conn.execute("UPDATE transactions SET share_source='manual' WHERE share_source='tricount'")
+        self.conn.execute("DROP TABLE IF EXISTS tricount_aliases")
         if "share" not in cols:  # fraction of the amount that is yours (shared costs); 1 = all of it
             self.conn.execute("ALTER TABLE transactions ADD COLUMN share REAL NOT NULL DEFAULT 1.0")
         if "share_source" not in cols:  # '' | 'manual' | 'tricount'
