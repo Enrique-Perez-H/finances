@@ -121,6 +121,13 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b"#2563eb", self.req("/logo.svg")[1])  # the header version is blue
         self.assertIn(b"#0f1115", self.req("/icon.svg")[1])  # the app icon is the dark one
 
+    def test_buttons_show_a_pressed_state(self):
+        code, css = self.req("/style.css")
+        for needle in (b"button:active:not(:disabled)", b"var(--sink)", b"var(--lift)", b"prefers-reduced-motion",
+                       b".ghost:active", b"focus-visible"):
+            self.assertIn(needle, css)
+        self.assertIn(b"navigator.vibrate", self.req("/app.js")[1])
+
     def test_theme_switch_assets(self):
         code, page = self.req("/")
         self.assertIn(b'id="theme"', page)

@@ -78,3 +78,21 @@ input[type=checkbox]{width:18px;height:18px;vertical-align:middle}
 div.warn{color:var(--bad);font-size:.85rem;margin:4px 0}
 .brand{display:flex;align-items:center;gap:10px}.brand img{border-radius:9px;display:block}
 .entry.dupe .desc{text-decoration:line-through;opacity:.6}.entry.dupe .row span:last-child{text-decoration:line-through;opacity:.6}
+
+/* --- button feel: raised at rest, pressed in when tapped --- */
+:root{--lift:0 1px 0 rgba(0,0,0,.28),0 2px 5px rgba(0,0,0,.28);--sink:inset 0 2px 5px rgba(0,0,0,.4)}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--lift:0 1px 0 rgba(0,0,0,.14),0 2px 5px rgba(0,0,0,.16);--sink:inset 0 2px 5px rgba(0,0,0,.3)}}
+:root[data-theme="light"]{--lift:0 1px 0 rgba(0,0,0,.14),0 2px 5px rgba(0,0,0,.16);--sink:inset 0 2px 5px rgba(0,0,0,.3)}
+button{cursor:pointer;box-shadow:var(--lift);-webkit-tap-highlight-color:transparent;touch-action:manipulation;
+  transition:transform .07s ease,box-shadow .07s ease,filter .12s ease,background-color .12s ease}
+button:disabled{cursor:default;box-shadow:none}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (hover:hover){button:hover:not(:disabled){filter:brightness(1.1)}}
+button:active:not(:disabled){transform:translateY(1px) scale(.96);box-shadow:var(--sink);filter:brightness(.88)}
+/* flat buttons have no resting shadow, so they show the press with a tint instead */
+.ghost{box-shadow:none}
+.ghost:active:not(:disabled){box-shadow:none;filter:none;background:color-mix(in srgb,var(--muted) 25%,transparent)}
+.chip,.ranges button,nav button,#theme{box-shadow:0 1px 2px rgba(0,0,0,.18)}
+.chip:active:not(:disabled),.ranges button:active:not(:disabled),nav button:active:not(:disabled),#theme:active:not(:disabled){box-shadow:var(--sink)}
+.tap{transition:background-color .1s}.tap:active{background:color-mix(in srgb,var(--muted) 18%,transparent)}
+@media (prefers-reduced-motion: reduce){button{transition:none}button:active:not(:disabled){transform:none}}

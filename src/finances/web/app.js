@@ -14,6 +14,12 @@ const TABS = [
 ];
 const loaded = {};
 
+// A tiny buzz when a button is pressed (Android Chrome; other browsers simply ignore it).
+document.addEventListener('pointerdown', ev => {
+  const b = ev.target.closest && ev.target.closest('button');
+  if (b && !b.disabled && navigator.vibrate) navigator.vibrate(8);
+}, {passive: true});
+
 // Light / dark switch. Until you press it, the device decides; afterwards your choice is remembered.
 const systemDark = () => window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 const isDark = () => {
