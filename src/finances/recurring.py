@@ -83,6 +83,7 @@ def _manual_rows(db: Database) -> dict[int, dict]:
     for r in db.conn.execute("SELECT group_id, tx_id FROM recurring_manual_entries"):
         linked[r["group_id"]].add(r["tx_id"])
     matchers = {gid: [(p, normalize(p)) for p in g["patterns"]] for gid, g in groups.items()}
+    linked_by = {gid: ids for gid, ids in linked.items()}
     for r in db.conn.execute(
             "SELECT id, date, amount, description, category FROM counted"
             " WHERE category NOT IN (?, ?) AND amount != 0 AND paired_with = '' ORDER BY date, id",
@@ -95,7 +96,7 @@ def _manual_rows(db: Database) -> dict[int, dict]:
                 text = text if text is not None else normalize(r["description"])
                 hit = any(f" {p} " in f" {text} " for _, p in matchers[gid])
             if hit:
-                g["entries"].append(dict(r))
+                g["entries"].append(dict(r, explicit=r["id"] in linked_by.get(gid, ())))
     return groups
 
 
@@ -351,3 +352,13 @@ def summary(db: Database, today: date | None = None) -> dict:
         upcoming=sorted((i for i in out if i["next_date"] >= (today or date.today()).isoformat()),
                         key=lambda i: i["next_date"])[:6],
         hidden=hidden)
+
+
+def membership(db: Database) -> dict[str, dict]:
+    """Which entries belong to a recurring item you marked: {entry id: {group_id, name, explicit}}.
+    'explicit' = you picked the entry; otherwise it joined through a name you gave the item."""
+    out = {}
+    for g in _manual_rows(db).values():
+        for e in g["entries"]:
+            out.setdefault(e["id"], dict(group_id=g["id"], name=g["name"], explicit=e["explicit"]))
+    return out

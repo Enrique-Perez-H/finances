@@ -2,6 +2,7 @@ import {el, post, get} from './ui.js';
 
 const TABS = [
   ['overview', 'Overview'],
+  ['month', 'Month'],
   ['spending', 'Spending'],
   ['income', 'Income'],
   ['recurring', 'Recurring'],

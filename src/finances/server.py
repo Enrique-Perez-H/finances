@@ -70,7 +70,8 @@ GET_ROUTES = {
     "/api/spending": lambda db, q: analysis.spending(db, _q(q, "month")),
     "/api/entries": lambda db, q: analysis.entries(
         db, _q(q, "category"), _q(q, "since"), _q(q, "until"), _q(q, "q"), _q(q, "sort", "date"),
-        int(_num(q, "offset", 0)), int(_num(q, "limit", 50)), _q(q, "direction")),
+        int(_num(q, "offset", 0)), int(_num(q, "limit", 50)), _q(q, "direction"), _q(q, "flag")),
+    "/api/month": lambda db, q: analysis.month_overview(db, _q(q, "month", "")),
     "/api/transactions": lambda db, q: analysis.transactions(
         db, _q(q, "category"), _q(q, "month"), int(_num(q, "limit", 200))),
     "/api/income": lambda db, q: income.summary(db, int(_num(q, "months", 12))),

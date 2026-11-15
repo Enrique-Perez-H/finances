@@ -152,12 +152,13 @@ def transactions(db: Database, category: str | None, month: str | None, limit: i
 
 def entries(db: Database, category: str | None = None, since: str | None = None,
             until: str | None = None, q: str | None = None, sort: str = "date",
-            offset: int = 0, limit: int = 50, direction: str | None = None) -> dict:
+            offset: int = 0, limit: int = 50, direction: str | None = None, flag: str | None = None) -> dict:
     """Browse entries: filter by category (None or '*' = all), dates, text (accent-insensitive) and
-    direction ('out' = spending only, 'in' = receipts only).
+    direction ('out' = spending only, 'in' = receipts only) and flag ('review' = uncategorized,
+    'shared' = split with your partner, 'recurring' = marked as recurring).
     Reimbursement pairs are left out, they have their own list."""
-    sql, args = ("SELECT id, date, amount, description, category, cat_source, share, raw_amount FROM counted"
-                 " WHERE paired_with = ''"), []
+    sql, args = ("SELECT id, account_id, date, amount, description, category, cat_source, share, raw_amount"
+                 " FROM counted WHERE paired_with = ''"), []
     if category and category != "*":
         sql += " AND category=?"
         args.append(category)
@@ -170,9 +171,22 @@ def entries(db: Database, category: str | None = None, since: str | None = None,
     if direction in ("out", "in"):
         sql += " AND raw_amount < 0" if direction == "out" else " AND raw_amount > 0"
     sql += " ORDER BY " + ("ABS(amount) DESC, date DESC" if sort == "amount" else "date DESC") + ", id"
+    from . import recurring  # same tables; imported here to keep the module graph simple
+    member = recurring.membership(db)
     needle = normalize(q or "")
-    rows = [dict(r) for r in db.conn.execute(sql, args)
-            if not needle or needle in normalize(r["description"])]
+    rows = []
+    for r in db.conn.execute(sql, args):
+        if needle and needle not in normalize(r["description"]):
+            continue
+        r = dict(r)
+        r["recurring"] = member.get(r["id"])
+        if flag == "review" and r["category"] != UNCATEGORIZED:
+            continue
+        if flag == "shared" and r["share"] >= 1:
+            continue
+        if flag == "recurring" and not r["recurring"]:
+            continue
+        rows.append(r)
     total_in = round(sum(r["amount"] for r in rows if r["amount"] > 0), 2)
     total_out = round(-sum(r["amount"] for r in rows if r["amount"] < 0), 2)
     limit = max(1, min(limit, 200))
@@ -200,3 +214,29 @@ def top_entries(db: Database, month: str, n: int = 3) -> dict:
         return [dict(r) for r in rows]
 
     return dict(month=month, spends=pick("<", "ASC"), incomes=pick(">", "DESC"))
+
+
+def month_overview(db: Database, month: str, today: date | None = None) -> dict:
+    """One month at a glance: what came in, what you spent (after splitting shared costs), and what
+    sharing and recurring marks did to it."""
+    if not month:  # the latest month that has any entries
+        latest = db.conn.execute("SELECT MAX(substr(date,1,7)) FROM transactions").fetchone()[0]
+        month = latest or (today or date.today()).isoformat()[:7]
+    if len(month) != 7 or month[4] != "-" or not (month[:4] + month[5:]).isdigit():
+        raise ValueError("month must look like 2026-05")
+    from . import recurring
+    flow = next((m for m in monthly_cashflow(db, 600, today) if m["month"] == month),
+                dict(month=month, income=0.0, spending=0.0, saved=0.0, partial=False))
+    removed = db.conn.execute(
+        "SELECT COALESCE(SUM(-raw_amount - (-amount)), 0) FROM counted WHERE substr(date,1,7)=? AND raw_amount < 0"
+        " AND share < 1 AND category NOT IN (?, ?) AND paired_with = ''", (month, INTERNAL, CAPITAL)).fetchone()[0]
+    member = recurring.membership(db)
+    rows = db.conn.execute("SELECT id, raw_amount, category FROM counted WHERE substr(date,1,7)=? AND paired_with=''",
+                           (month,)).fetchall()
+    months = [r[0] for r in db.conn.execute("SELECT DISTINCT substr(date,1,7) m FROM transactions ORDER BY m DESC")]
+    return dict(month=month, months=months, income=flow["income"], spending=flow["spending"], saved=flow["saved"],
+                partial=flow["partial"], removed_by_sharing=round(removed, 2), entries=len(rows),
+                to_review=sum(r["category"] == UNCATEGORIZED for r in rows),
+                shared=db.conn.execute("SELECT COUNT(*) FROM counted WHERE substr(date,1,7)=? AND share < 1"
+                                       " AND paired_with=''", (month,)).fetchone()[0],
+                recurring=sum(r["id"] in member for r in rows))
