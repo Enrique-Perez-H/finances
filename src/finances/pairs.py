@@ -54,7 +54,7 @@ def apply(db: Database) -> int:
     """Recompute all pairs; returns how many entries changed state."""
     rows = [dict(r) for r in db.conn.execute(
         "SELECT id, date, amount, category FROM transactions"
-        " WHERE category NOT IN (?, ?) AND pair_blocked = 0 AND ABS(amount) >= ?",
+        " WHERE category NOT IN (?, ?) AND pair_blocked = 0 AND duplicate = 0 AND ABS(amount) >= ?",
         (INTERNAL, CAPITAL, MIN_AMOUNT))]
     wanted = find_pairs(rows)
     current = {r["id"]: r["paired_with"] for r in db.conn.execute(

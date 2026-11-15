@@ -127,7 +127,7 @@ def spending(db: Database, month: str | None = None) -> dict:
     cats = [dict(category=c, total=t, share=round(t / total, 4) if total else 0,
                  previous=prev.get(c, 0)) for c, t in cur.items()]
     unclear = db.conn.execute(
-        "SELECT COUNT(*) FROM transactions WHERE category=? AND paired_with=''", (UNCATEGORIZED,)).fetchone()[0]
+        "SELECT COUNT(*) FROM transactions WHERE category=? AND paired_with='' AND duplicate=0", (UNCATEGORIZED,)).fetchone()[0]
     return dict(month=month, months=months, previous_month=prev_month, total=round(total, 2),
                 previous_total=round(sum(prev.values()), 2), categories=cats, unclear=unclear)
 
@@ -150,15 +150,27 @@ def transactions(db: Database, category: str | None, month: str | None, limit: i
     return out
 
 
+def _twin_key(r) -> tuple:
+    return (r["account_id"], r["date"], r["raw_amount"], r["description"].strip().lower())
+
+
+def _twins(db: Database) -> set:
+    """Entries that have an identical twin (same account, date, amount and text), not yet flagged."""
+    return {(r[0], r[1], r[2], r[3]) for r in db.conn.execute(
+        "SELECT account_id, date, raw_amount, lower(trim(description)) FROM counted_all WHERE duplicate = 0"
+        " GROUP BY 1, 2, 3, 4 HAVING COUNT(*) > 1")}
+
+
 def entries(db: Database, category: str | None = None, since: str | None = None,
             until: str | None = None, q: str | None = None, sort: str = "date",
             offset: int = 0, limit: int = 50, direction: str | None = None, flag: str | None = None) -> dict:
     """Browse entries: filter by category (None or '*' = all), dates, text (accent-insensitive) and
     direction ('out' = spending only, 'in' = receipts only) and flag ('review' = uncategorized,
-    'shared' = split with your partner, 'recurring' = marked as recurring).
+    'shared' = split with your partner, 'recurring' = marked as recurring, 'duplicates' = flagged by
+    you or identical to another entry: same account, date, amount and text).
     Reimbursement pairs are left out, they have their own list."""
-    sql, args = ("SELECT id, account_id, date, amount, description, category, cat_source, share, raw_amount"
-                 " FROM counted WHERE paired_with = ''"), []
+    sql, args = ("SELECT id, account_id, date, amount, description, category, cat_source, share, raw_amount, duplicate"
+                 " FROM counted_all WHERE paired_with = ''"), []
     if category and category != "*":
         sql += " AND category=?"
         args.append(category)
@@ -173,13 +185,18 @@ def entries(db: Database, category: str | None = None, since: str | None = None,
     sql += " ORDER BY " + ("ABS(amount) DESC, date DESC" if sort == "amount" else "date DESC") + ", id"
     from . import recurring  # same tables; imported here to keep the module graph simple
     member = recurring.membership(db)
+    twins = _twins(db)
     needle = normalize(q or "")
     rows = []
     for r in db.conn.execute(sql, args):
         if needle and needle not in normalize(r["description"]):
             continue
         r = dict(r)
+        r["duplicate"] = bool(r["duplicate"])
+        r["possible_duplicate"] = (not r["duplicate"]) and _twin_key(r) in twins
         r["recurring"] = member.get(r["id"])
+        if flag == "duplicates" and not (r["duplicate"] or r["possible_duplicate"]):
+            continue
         if flag == "review" and r["category"] != UNCATEGORIZED:
             continue
         if flag == "shared" and r["share"] >= 1:
@@ -187,8 +204,8 @@ def entries(db: Database, category: str | None = None, since: str | None = None,
         if flag == "recurring" and not r["recurring"]:
             continue
         rows.append(r)
-    total_in = round(sum(r["amount"] for r in rows if r["amount"] > 0), 2)
-    total_out = round(-sum(r["amount"] for r in rows if r["amount"] < 0), 2)
+    total_in = round(sum(r["amount"] for r in rows if r["amount"] > 0 and not r["duplicate"]), 2)
+    total_out = round(-sum(r["amount"] for r in rows if r["amount"] < 0 and not r["duplicate"]), 2)
     limit = max(1, min(limit, 200))
     page = rows[max(offset, 0):max(offset, 0) + limit]
     for t in page:  # how a rule for this entry would be worded ("move all like this")
@@ -231,6 +248,7 @@ def month_overview(db: Database, month: str, today: date | None = None) -> dict:
         "SELECT COALESCE(SUM(-raw_amount - (-amount)), 0) FROM counted WHERE substr(date,1,7)=? AND raw_amount < 0"
         " AND share < 1 AND category NOT IN (?, ?) AND paired_with = ''", (month, INTERNAL, CAPITAL)).fetchone()[0]
     member = recurring.membership(db)
+    twins = _twins(db)
     rows = db.conn.execute("SELECT id, raw_amount, category FROM counted WHERE substr(date,1,7)=? AND paired_with=''",
                            (month,)).fetchall()
     months = [r[0] for r in db.conn.execute("SELECT DISTINCT substr(date,1,7) m FROM transactions ORDER BY m DESC")]
@@ -239,4 +257,9 @@ def month_overview(db: Database, month: str, today: date | None = None) -> dict:
                 to_review=sum(r["category"] == UNCATEGORIZED for r in rows),
                 shared=db.conn.execute("SELECT COUNT(*) FROM counted WHERE substr(date,1,7)=? AND share < 1"
                                        " AND paired_with=''", (month,)).fetchone()[0],
+                duplicates=db.conn.execute("SELECT COUNT(*) FROM counted_all WHERE substr(date,1,7)=? AND duplicate=1"
+                                           " AND paired_with=''", (month,)).fetchone()[0]
+                + sum(1 for r in db.conn.execute(
+                    "SELECT account_id, date, raw_amount, description FROM counted_all WHERE substr(date,1,7)=?"
+                    " AND duplicate=0 AND paired_with=''", (month,)) if _twin_key(r) in twins),
                 recurring=sum(r["id"] in member for r in rows))

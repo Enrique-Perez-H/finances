@@ -145,6 +145,8 @@ class Database:
                     " WHEN mode = 'linked' THEN 'skip' WHEN mode = 'virtual' THEN 'shared' ELSE '' END")
                 self.conn.execute("UPDATE transactions SET share_source='manual' WHERE share_source='tricount'")
         self.conn.execute("DROP TABLE IF EXISTS tricount_aliases")
+        if "duplicate" not in cols:  # 1 = you flagged it as a duplicate: it counts for nothing anywhere
+            self.conn.execute("ALTER TABLE transactions ADD COLUMN duplicate INTEGER NOT NULL DEFAULT 0")
         if "share" not in cols:  # fraction of the amount that is yours (shared costs); 1 = all of it
             self.conn.execute("ALTER TABLE transactions ADD COLUMN share REAL NOT NULL DEFAULT 1.0")
         if "share_source" not in cols:  # '' | 'manual' | 'tricount'
@@ -159,10 +161,13 @@ class Database:
             self.conn.execute("ALTER TABLE transactions ADD COLUMN cat_source TEXT NOT NULL DEFAULT ''")
         self.conn.executescript("""
             DROP VIEW IF EXISTS counted;
-            CREATE VIEW counted AS
+            DROP VIEW IF EXISTS counted_all;
+            CREATE VIEW counted_all AS
             SELECT id, account_id, date, amount * share AS amount, description, category, mcc, cat_source,
-                   paired_with, pair_blocked, share, amount AS raw_amount
-            FROM transactions;""")
+                   paired_with, pair_blocked, share, amount AS raw_amount, duplicate
+            FROM transactions;
+            CREATE VIEW counted AS SELECT * FROM counted_all WHERE duplicate = 0;""")
+
 
     def save(self) -> None:
         self.conn.commit()

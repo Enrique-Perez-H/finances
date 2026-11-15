@@ -23,13 +23,13 @@ def years(db: Database) -> list[str]:
 
 def _rows(db: Database, year: str) -> list[dict]:
     return [dict(r) for r in db.conn.execute(
-        "SELECT t.id, t.date, t.amount, t.description, t.category, t.cat_source, t.paired_with,"
-        " a.name AS account FROM counted t JOIN accounts a ON a.id = t.account_id"
+        "SELECT t.id, t.date, t.amount, t.description, t.category, t.cat_source, t.paired_with, t.duplicate,"
+        " a.name AS account FROM counted_all t JOIN accounts a ON a.id = t.account_id"
         " WHERE substr(t.date,1,4)=? ORDER BY t.date, t.id", (year,))]
 
 
 def _counted(r: dict) -> bool:
-    return r["category"] not in EXCLUDED and not r["paired_with"]
+    return r["category"] not in EXCLUDED and not r["paired_with"] and not r.get("duplicate")
 
 
 def summary(db: Database, year: str) -> dict:
@@ -40,11 +40,14 @@ def summary(db: Database, year: str) -> dict:
     monthly = {f"{year}-{m:02d}": {"income": 0.0, "spending": 0.0} for m in range(1, 13)}
     taxes, not_counted = [], {"internal_in": 0.0, "internal_out": 0.0, "capital_in": 0.0,
                               "capital_out": 0.0, "reimbursed_spent": 0.0, "reimbursed_received": 0.0,
-                              "reimbursed_pairs": 0}
+                              "reimbursed_pairs": 0, "duplicates": 0, "duplicate_amount": 0.0}
     for r in rows:
         amount = r["amount"]
         if not _counted(r):
-            if r["category"] == INTERNAL:
+            if r["duplicate"]:
+                not_counted["duplicates"] += 1
+                not_counted["duplicate_amount"] += abs(amount)
+            elif r["category"] == INTERNAL:
                 not_counted["internal_in" if amount > 0 else "internal_out"] += abs(amount)
             elif r["category"] == CAPITAL:
                 not_counted["capital_in" if amount > 0 else "capital_out"] += abs(amount)
@@ -124,13 +127,14 @@ def export_entries(db: Database, year: str, style: str = "es") -> bytes:
     if year == "all":
         rows = [dict(r) for r in db.conn.execute(
             "SELECT t.id, t.date, t.amount, t.description, t.category, t.cat_source, t.paired_with,"
-            " a.name AS account FROM transactions t JOIN accounts a ON a.id = t.account_id"
+            " t.duplicate, a.name AS account FROM counted_all t JOIN accounts a ON a.id = t.account_id"
             " ORDER BY t.date, t.id")]
     else:
         rows = _rows(db, year)
     lines = []
     for r in rows:
-        reason = "" if _counted(r) else (r["category"] if r["category"] in EXCLUDED else "Reimbursed")
+        reason = "" if _counted(r) else ("Duplicate" if r["duplicate"] else
+                                         r["category"] if r["category"] in EXCLUDED else "Reimbursed")
         lines.append([r["date"], _safe(r["account"]), _safe(r["description"]), _number(r["amount"], style),
                       _safe(r["category"]), "yes" if _counted(r) else "no", reason,
                       {"manual": "set by you", "user": "your rule", "connector": "provider",

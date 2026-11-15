@@ -77,3 +77,4 @@ input[type=checkbox]{width:18px;height:18px;vertical-align:middle}
 .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 div.warn{color:var(--bad);font-size:.85rem;margin:4px 0}
 .brand{display:flex;align-items:center;gap:10px}.brand img{border-radius:9px;display:block}
+.entry.dupe .desc{text-decoration:line-through;opacity:.6}.entry.dupe .row span:last-child{text-decoration:line-through;opacity:.6}

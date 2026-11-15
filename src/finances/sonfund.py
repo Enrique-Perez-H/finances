@@ -101,7 +101,7 @@ def simulate(db: Database, today: date | None = None) -> dict:
     if not acct:
         return dict(configured=True, config=cfg, rows=[], projection=[], notes=["The chosen account no longer exists."])
     txs = [(r["date"], r["amount"]) for r in db.conn.execute(
-        "SELECT date, amount FROM transactions WHERE account_id=? ORDER BY date", (cfg["account_id"],))]
+        "SELECT date, amount FROM transactions WHERE account_id=? AND duplicate=0 ORDER BY date", (cfg["account_id"],))]
 
     def balance_at(day):  # rebuilt backwards from today's balance, known from the first transaction on
         if not txs or day < txs[0][0]:
@@ -110,7 +110,7 @@ def simulate(db: Database, today: date | None = None) -> dict:
 
     paid = [(r["date"][:7], r["amount"], r["description"]) for r in db.conn.execute(
         "SELECT date, amount, description FROM transactions WHERE account_id=? AND category=? AND amount>0"
-        " AND paired_with=''", (cfg["account_id"], INTEREST))]
+        " AND paired_with='' AND duplicate=0", (cfg["account_id"], INTEREST))]
     marked = [p for p in paid if MARKER in normalize(p[2])]
     interest = {}
     for month, amount, _ in (marked or paid):  # only real interest when it can be told apart

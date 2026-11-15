@@ -46,7 +46,7 @@ def evolution(db: Database, months: int = 24, today: date | None = None) -> dict
     today = today or date.today()
     accounts = [dict(r) for r in db.conn.execute("SELECT id, name, kind, balance FROM accounts WHERE kind != 'shared'")]
     txs = {a["id"]: [] for a in accounts}
-    for r in db.conn.execute("SELECT account_id, date, amount FROM transactions ORDER BY date"):
+    for r in db.conn.execute("SELECT account_id, date, amount FROM transactions WHERE duplicate=0 ORDER BY date"):
         txs.setdefault(r["account_id"], []).append((r["date"], r["amount"]))
     snaps = {a["id"]: [] for a in accounts}
     for r in db.conn.execute("SELECT account_id, day, balance FROM balance_history ORDER BY day"):
@@ -98,7 +98,7 @@ def interest(db: Database, today: date | None = None) -> dict:
     today = today or date.today()
     rows = db.conn.execute(
         "SELECT t.date, t.amount, a.name FROM transactions t JOIN accounts a ON a.id=t.account_id"
-        " WHERE t.amount > 0 AND t.category=? AND t.category != ?", (INTEREST, INTERNAL)).fetchall()
+        " WHERE t.amount > 0 AND t.category=? AND t.category != ? AND t.duplicate = 0", (INTEREST, INTERNAL)).fetchall()
     monthly, by_account = {}, {}
     for r in rows:
         monthly[r["date"][:7]] = monthly.get(r["date"][:7], 0.0) + r["amount"]

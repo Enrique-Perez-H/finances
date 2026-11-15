@@ -331,7 +331,8 @@ def review_queue(db: Database, limit: int = 30) -> list[dict]:
     """Uncategorized entries grouped by merchant, biggest first, for you to decide."""
     groups = defaultdict(lambda: {"count": 0, "total": 0.0, "sample": "", "last": ""})
     for r in db.conn.execute(
-            "SELECT description, amount, date FROM transactions WHERE category=? AND paired_with='' ORDER BY date",
+            "SELECT description, amount, date FROM transactions WHERE category=? AND paired_with='' AND duplicate=0"
+            " ORDER BY date",
             (UNCATEGORIZED,)):
         direction = "in" if r["amount"] > 0 else "out"  # same shop paid and refunded are two questions
         g = groups[(merchant_key(r["description"]) or normalize(r["description"]), direction)]
@@ -349,7 +350,7 @@ def review_queue(db: Database, limit: int = 30) -> list[dict]:
 def generic_entries(db: Database, limit: int = 15) -> dict:
     """Uncategorized entries that name no merchant (e.g. 'contactless'): one by one."""
     rows = [r for r in db.conn.execute(
-        "SELECT id, date, amount, description FROM transactions WHERE category=? AND paired_with=''"
+        "SELECT id, date, amount, description FROM transactions WHERE category=? AND paired_with='' AND duplicate=0"
         " ORDER BY ABS(amount) DESC", (UNCATEGORIZED,))
         if is_generic(merchant_key(r["description"]) or normalize(r["description"]))]
     return dict(total=len(rows), entries=[dict(r) for r in rows[:limit]])
@@ -423,6 +424,18 @@ def set_manual_many(db: Database, tx_ids: list[str], category: str) -> int:
     cur = db.conn.execute(
         f"UPDATE transactions SET category=?, cat_source='manual' WHERE id IN ({marks})",
         (category, *tx_ids))
+    return cur.rowcount
+
+
+def set_duplicate(db: Database, tx_ids: list[str], duplicate: bool) -> int:
+    """Flag entries as duplicates (they count for nothing: totals, balances, averages, exports) or take
+    the flag off. The entry itself is kept, so you can always undo it."""
+    if not tx_ids or len(tx_ids) > 500:
+        raise ValueError("select between 1 and 500 entries")
+    marks = ",".join("?" * len(tx_ids))
+    cur = db.conn.execute(f"UPDATE transactions SET duplicate=? WHERE id IN ({marks})", (int(bool(duplicate)), *tx_ids))
+    from . import pairs
+    pairs.apply(db)  # a flagged entry cannot be one half of a reimbursement pair
     return cur.rowcount
 
 

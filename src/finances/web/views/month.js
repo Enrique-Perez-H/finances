@@ -1,6 +1,5 @@
 import {card, row, el, eur, eur2, get, post, note, button, categoryPicker} from '../ui.js';
 
-const FILTERS = [['all', 'All'], ['out', 'Spending'], ['in', 'Income'], ['review', 'To review'], ['shared', 'Shared'], ['recurring', 'Recurring']];
 const CADENCES = 'monthly, every two months, quarterly, semiannual or yearly';
 const PAGE = 40;
 let month = '';
@@ -12,7 +11,7 @@ let shown = PAGE;
 const params = m => {
   const q = new URLSearchParams({since: `${m}-01`, until: `${m}-31`, sort: 'date', limit: String(shown)});
   if (filter === 'out' || filter === 'in') q.set('direction', filter);
-  if (['review', 'shared', 'recurring'].includes(filter)) q.set('flag', filter);
+  if (['review', 'shared', 'recurring', 'duplicates'].includes(filter)) q.set('flag', filter);
   if (category !== '*') q.set('category', category);
   if (query.trim()) q.set('q', query.trim());
   return q;
@@ -55,13 +54,14 @@ export async function render(root) {
   const filters = card('Show', el('div', {className: 'chips'},
     chip('All', 'all'), chip('Spending', 'out'), chip('Income', 'in'),
     chip('To review', 'review', overview.to_review), chip('Shared', 'shared', overview.shared),
-    chip('Recurring', 'recurring', overview.recurring)), search, catSelect);
+    chip('Recurring', 'recurring', overview.recurring), chip('Duplicates', 'duplicates', overview.duplicates)), search, catSelect);
 
   // --- the entries ---
   const entryRow = t => {
     const outflow = t.raw_amount < 0;
     const virtual = t.account_id === 'tricount-shared';
-    const sharedBox = el('input', {type: 'checkbox', checked: t.share < 1, disabled: !outflow || virtual});
+    const dupe = t.duplicate;
+    const sharedBox = el('input', {type: 'checkbox', checked: t.share < 1, disabled: !outflow || virtual || dupe});
     sharedBox.addEventListener('change', () => act(() => post('/api/share', {tx_ids: [t.id], share: sharedBox.checked ? 0.5 : 1})));
     const label = el('label', {className: 'muted'}, sharedBox, virtual ? ' From Tricount' : outflow ? ' Shared with my partner (½)' : ' Income');
 
@@ -88,12 +88,17 @@ export async function render(root) {
       }
     });
 
-    return el('div', {className: 'entry'},
+    const dupBox = el('input', {type: 'checkbox', checked: dupe});
+    dupBox.addEventListener('change', () => act(() => post('/api/duplicate', {tx_ids: [t.id], duplicate: dupBox.checked})));
+    return el('div', {className: 'entry' + (dupe ? ' dupe' : '')},
       el('div', {className: 'row'}, el('span', {className: 'muted', textContent: t.date}),
         el('span', {className: t.amount < 0 ? 'neg' : 'pos', textContent: eur2(t.amount)})),
       el('div', {className: 'desc', textContent: t.description}),
+      dupe ? el('div', {className: 'muted', textContent: 'Flagged as a duplicate: it counts for nothing.'}) : null,
+      t.possible_duplicate ? el('div', {className: 'warn', textContent: 'Same account, date, amount and text as another entry. A duplicate?'}) : null,
       t.share < 1 ? el('div', {className: 'muted', textContent: `counts ${Math.round(t.share * 100)}% of ${eur2(Math.abs(t.raw_amount))}`}) : null,
       label,
+      el('label', {className: 'muted'}, dupBox, ' Duplicate (do not count)'),
       categoryPicker(cats.filter(c => c !== t.category), c => act(() => post('/api/categorize', {tx_id: t.id, category: c})), {current: t.category}),
       recurring);
   };

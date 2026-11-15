@@ -108,8 +108,8 @@ export function browserCard(cats, months, month) {
       box.checked ? browse.selected.add(t.id) : browse.selected.delete(t.id);
       drawBulk();
     });
-    return el('div', {className: 'entry'},
-      el('div', {className: 'row'}, el('label', {className: 'muted'}, box, ` ${t.date}`),
+    return el('div', {className: 'entry' + (t.duplicate ? ' dupe' : '')},
+      el('div', {className: 'row'}, el('label', {className: 'muted'}, box, ` ${t.date}${t.duplicate ? ' · duplicate (not counted)' : ''}`),
         el('span', {textContent: eur2(t.amount), className: t.amount < 0 ? 'neg' : 'pos'})),
       el('div', {className: 'desc', textContent: t.description}),
       t.share < 1 ? el('div', {className: 'muted', textContent: `counts ${Math.round(t.share * 100)}% of ${eur2(Math.abs(t.raw_amount))} (shared)`}) : null,
@@ -145,6 +145,10 @@ export function browserCard(cats, months, month) {
       categoryPicker(cats, moveSelected, {placeholder: `Move ${n} to…`}),
       recurringPicker(manual, extra => markRecurring([...browse.selected], extra)),
       sharePicker(share => shareSelected(share)),
+      button('Flag as duplicate', async () => {
+        try { await post('/api/duplicate', {tx_ids: [...browse.selected], duplicate: true}); browse.selected.clear(); await load(); }
+        catch (e) { alert(e.message); }
+      }, 'chip'),
       button('Clear', () => { browse.selected.clear(); draw(); }, 'ghost')] : []));
     bulk.style.display = n ? 'block' : 'none';
   };

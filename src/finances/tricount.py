@@ -306,7 +306,7 @@ def in_bank(db: Database, row: dict) -> dict | None:
     best = None
     for r in db.conn.execute(
             "SELECT id, date, amount, description FROM transactions WHERE amount < 0 AND account_id != ?"
-            " AND date BETWEEN ? AND ? AND paired_with = ''", (ACCOUNT_ID, lo.isoformat(), hi.isoformat())):
+            " AND date BETWEEN ? AND ? AND paired_with = '' AND duplicate = 0", (ACCOUNT_ID, lo.isoformat(), hi.isoformat())):
         diff = abs(abs(r["amount"]) - row["total"])
         if diff <= tolerance:
             key = (abs((date.fromisoformat(r["date"]) - d).days), diff, r["id"])

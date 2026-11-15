@@ -28,7 +28,7 @@ def status(db: Database, secrets: dict, now: datetime | None = None) -> dict:
               for p, t in sorted(by_provider.items())]
 
     unclear = db.conn.execute(
-        "SELECT COUNT(*) FROM transactions WHERE category='uncategorized' AND paired_with=''").fetchone()[0]
+        "SELECT COUNT(*) FROM transactions WHERE category='uncategorized' AND paired_with='' AND duplicate=0").fetchone()[0]
 
     consent = None
     session = secrets.get("eb_session")

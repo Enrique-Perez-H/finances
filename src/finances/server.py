@@ -393,6 +393,14 @@ def make_handler(db: Database, secrets: dict, allowed_hosts=ALLOWED_HOSTS):
                     if result is None:
                         return self._json(404, {"error": "not found"})
                     return self._json(200, result)
+                if path == "/api/duplicate":
+                    ids = body.get("tx_ids")
+                    if not isinstance(ids, list):
+                        raise BadRequest("tx_ids must be a list")
+                    with lock:
+                        n = categorize.set_duplicate(db, [str(i) for i in ids], bool(body.get("duplicate", True)))
+                        db.save()
+                    return self._json(200, {"changed": n})
                 if path == "/api/share":
                     ids = body.get("tx_ids")
                     if not isinstance(ids, list):

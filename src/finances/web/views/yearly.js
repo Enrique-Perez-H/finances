@@ -42,6 +42,7 @@ export async function render(root) {
     note('Shown so the totals are not a mystery.'),
     row('Moved between your own accounts', `${eur2(n.internal_out)} out · ${eur2(n.internal_in)} in`),
     row('One-off capital items', `${eur2(n.capital_out)} out · ${eur2(n.capital_in)} in`),
+    n.duplicates ? row(`Flagged as duplicates (${n.duplicates})`, eur2(n.duplicate_amount)) : null,
     row(`Reimbursed payments (${n.reimbursed_pairs})`, `${eur2(n.reimbursed_spent)} spent · ${eur2(n.reimbursed_received)} received`));
 
   const table = el('table', {className: 'months'},
