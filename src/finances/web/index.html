@@ -8,11 +8,15 @@
 <link rel="icon" href="/icon.svg">
 <meta name="theme-color" content="#0f1115">
 <link rel="stylesheet" href="/style.css">
+<script src="/theme.js"></script>
 </head>
 <body>
 <header>
   <h1>Finances</h1>
-  <button id="sync">Sync</button>
+  <div class="actions">
+    <button id="theme" aria-label="Switch between light and dark" title="Light / dark"></button>
+    <button id="sync">Sync</button>
+  </div>
 </header>
 <p id="status" role="status"></p>
 <nav id="tabs"></nav>

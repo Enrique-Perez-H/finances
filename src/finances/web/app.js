@@ -12,6 +12,30 @@ const TABS = [
   ['accounts', 'Accounts'],
 ];
 const loaded = {};
+
+// Light / dark switch. Until you press it, the device decides; afterwards your choice is remembered.
+const systemDark = () => window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+const isDark = () => {
+  const chosen = document.documentElement.getAttribute('data-theme');
+  return chosen ? chosen === 'dark' : systemDark();
+};
+function paintThemeButton() {
+  const button = document.getElementById('theme');
+  button.textContent = isDark() ? '☀' : '☾';  // shows what a press switches to
+  button.title = isDark() ? 'Switch to light' : 'Switch to dark';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = getComputedStyle(document.body).backgroundColor;
+}
+document.getElementById('theme').addEventListener('click', () => {
+  const next = isDark() ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('theme', next); } catch (e) { /* private mode */ }
+  paintThemeButton();
+});
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', paintThemeButton);
+}
+paintThemeButton();
 let badgeTimer;
 
 // "Spending (12)": how many entries still need a category.

@@ -1,5 +1,11 @@
 :root{--bg:#0f1115;--card:#181b22;--fg:#e8eaed;--muted:#8b93a1;--good:#4ade80;--bad:#f87171;--accent:#60a5fa}
-@media (prefers-color-scheme: light){:root{--bg:#f4f5f7;--card:#fff;--fg:#14171c;--muted:#5d6675;--good:#15803d;--bad:#b91c1c;--accent:#1d4ed8}}
+/* Light follows the device unless you chose a theme with the switch (data-theme on <html>). */
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#f4f5f7;--card:#fff;--fg:#14171c;--muted:#5d6675;--good:#15803d;--bad:#b91c1c;--accent:#1d4ed8}}
+:root[data-theme="light"]{--bg:#f4f5f7;--card:#fff;--fg:#14171c;--muted:#5d6675;--good:#15803d;--bad:#b91c1c;--accent:#1d4ed8}
+:root[data-theme="dark"]{color-scheme:dark}
+:root[data-theme="light"]{color-scheme:light}
+.actions{display:flex;gap:8px;align-items:center}
+#theme{background:transparent;color:var(--fg);border:1px solid var(--muted);padding:8px 12px;font-size:1.1rem;line-height:1}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif;padding:0 16px 32px}
 header{display:flex;justify-content:space-between;align-items:center;padding:16px 0}

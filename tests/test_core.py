@@ -103,6 +103,17 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.req("/api/sync", "POST", {"X-Requested-With": "finances"})[0], 200)
         self.assertEqual(self.req("/api/summary", headers={"Host": "evil.example"})[0], 403)
 
+    def test_theme_switch_assets(self):
+        code, page = self.req("/")
+        self.assertIn(b'id="theme"', page)
+        self.assertIn(b'/theme.js', page)  # loaded in <head>: the chosen theme is set before the first paint
+        code, script = self.req("/theme.js")
+        self.assertEqual(code, 200)
+        self.assertIn(b"data-theme", script)
+        code, css = self.req("/style.css")
+        for needle in (b'[data-theme="light"]', b'prefers-color-scheme: light', b':not([data-theme="dark"])'):
+            self.assertIn(needle, css)
+
     def test_callback_serves_dashboard(self):
         code, body = self.req("/callback?code=x&state=y")
         self.assertEqual(code, 200)
