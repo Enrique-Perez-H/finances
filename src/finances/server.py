@@ -18,7 +18,7 @@ from .sync import run_sync
 
 WEB = Path(__file__).parent / "web"
 TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
-         ".json": "application/json", ".svg": "image/svg+xml"}
+         ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png"}
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
 
 

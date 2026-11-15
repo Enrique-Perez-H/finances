@@ -103,6 +103,24 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.req("/api/sync", "POST", {"X-Requested-With": "finances"})[0], 200)
         self.assertEqual(self.req("/api/summary", headers={"Host": "evil.example"})[0], 403)
 
+    def test_logo_and_icons_are_served_and_the_manifest_points_at_real_files(self):
+        import urllib.request as ur
+        code, page = self.req("/")
+        self.assertIn(b'/logo.svg', page)       # header logo
+        self.assertIn(b'rel="apple-touch-icon"', page)
+        code, manifest = self.req("/manifest.json")
+        icons = json.loads(manifest)["icons"]
+        self.assertTrue({"/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"} <= {i["src"] for i in icons})
+        for icon in icons:
+            code, body = self.req(icon["src"])
+            self.assertEqual(code, 200, icon["src"])
+            if icon["type"] == "image/png":
+                self.assertTrue(body.startswith(b"\x89PNG"), icon["src"])
+                with ur.urlopen(f"http://127.0.0.1:{self.port}{icon['src']}") as r:
+                    self.assertEqual(r.headers["Content-Type"], "image/png")
+        self.assertIn(b"#2563eb", self.req("/logo.svg")[1])  # the header version is blue
+        self.assertIn(b"#0f1115", self.req("/icon.svg")[1])  # the app icon is the dark one
+
     def test_theme_switch_assets(self):
         code, page = self.req("/")
         self.assertIn(b'id="theme"', page)
