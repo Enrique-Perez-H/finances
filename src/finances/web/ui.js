@@ -223,3 +223,44 @@ export async function downloadPost(path, body = {}) {
   URL.revokeObjectURL(url);
   return name;
 }
+
+// Share of a total per category as a donut with a tappable legend. items: [{label, value}]
+const DONUT = ['#2f6fed', '#e8590c', '#2f9e44', '#ae3ec9', '#f08c00', '#1098ad', '#d6336c', '#5c7cfa', '#868e96', '#74b816'];
+export function donut(items, {format = eur, centre = ''} = {}) {
+  const total = items.reduce((a, i) => a + i.value, 0);
+  if (!(total > 0)) return note('Nothing to show yet.');
+  const top = items.slice(0, DONUT.length - 1), rest = items.slice(DONUT.length - 1);
+  const parts = rest.length ? [...top, {label: `Other (${rest.length})`, value: rest.reduce((a, i) => a + i.value, 0)}] : top;
+  const ns = 'http://www.w3.org/2000/svg', R = 44, C = 2 * Math.PI * R;
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 120 120'); svg.setAttribute('class', 'donut');
+  svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Share per category');
+  const info = el('div', {className: 'donut-info muted', textContent: centre || 'Tap a slice'});
+  let offset = 0;
+  const slices = parts.map((p, k) => {
+    const len = (p.value / total) * C;
+    const c = document.createElementNS(ns, 'circle');
+    c.setAttribute('cx', 60); c.setAttribute('cy', 60); c.setAttribute('r', R); c.setAttribute('fill', 'none');
+    c.setAttribute('stroke', k === parts.length - 1 && rest.length ? DONUT[DONUT.length - 1] : DONUT[k]);
+    c.setAttribute('stroke-width', 22);
+    c.setAttribute('stroke-dasharray', `${Math.max(len - 0.8, 0.5)} ${C}`);
+    c.setAttribute('stroke-dashoffset', -offset);
+    c.setAttribute('transform', 'rotate(-90 60 60)');
+    offset += len;
+    svg.appendChild(c);
+    return c;
+  });
+  const show = k => {
+    slices.forEach((c, j) => c.setAttribute('opacity', j === k ? 1 : .35));
+    info.textContent = `${parts[k].label}: ${format(parts[k].value)} · ${pct(parts[k].value / total)}`;
+  };
+  const legendRows = parts.map((p, k) => {
+    const r = el('div', {className: 'tap donut-row'},
+      el('i', {className: 'sw', style: `background:${k === parts.length - 1 && rest.length ? DONUT[DONUT.length - 1] : DONUT[k]}`}),
+      el('span', {textContent: p.label}), el('span', {className: 'muted', textContent: pct(p.value / total)}));
+    r.addEventListener('click', () => show(k));
+    return r;
+  });
+  slices.forEach((c, k) => c.addEventListener('click', () => show(k)));
+  return el('div', {className: 'donut-wrap'}, svg, info, el('div', {className: 'donut-legend'}, ...legendRows));
+}

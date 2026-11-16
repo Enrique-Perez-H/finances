@@ -1,4 +1,4 @@
-import {card, row, el, eur, eur2, get, post, note, button} from '../ui.js';
+import {card, row, el, eur, eur2, get, post, note, button, donut} from '../ui.js';
 
 const CADENCES = ['monthly', 'every two months', 'quarterly', 'semiannual', 'yearly'];
 
@@ -55,6 +55,11 @@ const item = (i, reload) => {
     button('Not recurring', async () => { await post('/api/recurring/ignore', {key: i.key, direction: i.direction}); reload(); }, 'ghost'));
 };
 
+function shareByCategory(costs) {
+  const m = {};
+  for (const i of costs) m[i.category || 'Uncategorised'] = (m[i.category || 'Uncategorised'] || 0) + (i.monthly_equivalent || 0);
+  return Object.entries(m).map(([label, value]) => ({label, value})).filter(x => x.value > 0).sort((a, b) => b.value - a.value);
+}
 export async function render(root) {
   const d = await get('/api/recurring');
   const reload = () => render(root);
@@ -85,6 +90,8 @@ export async function render(root) {
     card('Recurring costs', el('div', {className: 'big', textContent: `${eur(d.monthly_costs)}/mo`}),
       note(`${eur(d.yearly_costs)} per year · recurring income ${eur(d.monthly_income)}/mo`),
       note('Found from repeated payments: a steady rhythm, or a payee that shows up almost every month even with a different date and amount. Variable ones count at their real monthly average.')),
+    card('Share per category', donut(shareByCategory(costs), {format: v => `${eur(v)}/mo`}),
+      note('Monthly equivalent of the recurring costs above, grouped by category.')),
     ...(d.upcoming.length ? [card('Coming up', ...d.upcoming.map(i =>
       row(`${i.next_date} · ${i.label.slice(0, 26)}`, eur2(i.typical_amount))))] : []),
     card('All recurring costs', ...(costs.length ? costs.map(i => item(i, reload)) : [note('None detected yet.')])),

@@ -1,4 +1,4 @@
-import {card, row, el, eur, eur2, pct, get, post, note, button, barRow, categoryPicker} from '../ui.js';
+import {card, row, el, eur, eur2, pct, get, post, note, button, barRow, categoryPicker, donut} from '../ui.js';
 import {browserCard, browse} from './browser.js';
 
 const QUICK = ['Internal transfer', 'Groceries', 'Restaurants & bars', 'Transport', 'Shopping',
@@ -120,6 +120,7 @@ function averageCard(avg, reload) {
       el('summary', {}, el('span', {textContent: 'Recurring costs included'}), el('span', {textContent: `${eur(avg.recurring_total)}/mo`})),
       note('Costs you marked as recurring count at their monthly equivalent, so a yearly bill is a twelfth every month. Mark more from Spending → Browse entries.'),
       ...avg.recurring.map(r => row(`${r.name} · ${r.cadence}`, `${eur2(r.monthly)}/mo`))) : null,
+    donut(avg.categories.map(c => ({label: c.category, value: c.average})), {format: v => `${eur(v)}/mo`}),
     ...avg.categories.map(c => barRow(c.category, c.average, max, `${eur(c.average)} · ${pct(c.share)}`)),
     note('A month without spending in a category counts as zero. The month in progress, transfers between your accounts, one-off capital items and reimbursed payments are not counted.'));
 }

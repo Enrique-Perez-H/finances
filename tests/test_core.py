@@ -128,6 +128,11 @@ class ServerTests(unittest.TestCase):
             self.assertIn(needle, css)
         self.assertIn(b"navigator.vibrate", self.req("/app.js")[1])
 
+    def test_category_share_donut_is_wired(self):
+        self.assertIn(b"export function donut", self.req("/ui.js")[1])
+        self.assertIn(b"donut(", self.req("/views/spending.js")[1])
+        self.assertIn(b"shareByCategory", self.req("/views/recurring.js")[1])
+
     def test_theme_switch_assets(self):
         code, page = self.req("/")
         self.assertIn(b'id="theme"', page)
