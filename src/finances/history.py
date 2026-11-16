@@ -52,10 +52,22 @@ def evolution(db: Database, months: int = 24, today: date | None = None) -> dict
     for r in db.conn.execute("SELECT account_id, day, balance FROM balance_history ORDER BY day"):
         snaps.setdefault(r["account_id"], []).append((r["day"], r["balance"]))
 
+    anchors = {a["id"]: [] for a in accounts}
+    for r in db.conn.execute("SELECT account_id, day, balance FROM balance_anchors ORDER BY day"):
+        anchors.setdefault(r["account_id"], []).append((r["day"], r["balance"]))
+
     def at(acct, day):
         if day >= today.isoformat():
             return acct["balance"]
         rows = txs[acct["id"]]
+        known = anchors.get(acct["id"]) or []   # the bank's own balances from an export beat any rebuild
+        if known and known[0][0] <= day:
+            before = [(d, b) for d, b in known if d <= day][-1]
+            if day <= known[-1][0]:
+                return before[1]
+            return before[1] + sum(a for d, a in rows if before[0] < d <= day)
+        if known:
+            return known[0][1] - sum(a for d, a in rows if day < d <= known[0][0])
         # An account that has transactions is rebuilt from them whatever type you gave it
         # (e.g. Trade Republic cash counted as an investment). Portfolios have none.
         if rows and day >= rows[0][0]:

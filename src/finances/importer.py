@@ -111,6 +111,38 @@ def parse_export(rows: list[list[str]]) -> list[dict]:
     return out
 
 
+def _balance(text) -> float | None:
+    try:
+        return parse_amount(text)
+    except ValueError:
+        return None
+
+
+def check_chain(rows: list[dict]) -> int:
+    """How many neighbouring movements do not add up (balance + amount != next balance): a sign that
+    the export misses entries. The export may list newest or oldest first; both are handled."""
+    seq = [(r["amount"], _balance(r["balance"])) for r in rows]
+    if len(seq) < 2 or any(b is None for _, b in seq):
+        return 0
+    newest_first = rows[0]["date"] >= rows[-1]["date"]
+    if newest_first:
+        seq = seq[::-1]
+    return sum(1 for (_, prev), (amt, bal) in zip(seq, seq[1:]) if abs(prev + amt - bal) > 0.011)
+
+
+def store_anchors(db: Database, account: str, rows: list[dict]) -> int:
+    """The bank's own balance at the end of each day with movements: ground truth for the history."""
+    if not rows or any(_balance(r["balance"]) is None for r in rows):
+        return 0
+    newest_first = rows[0]["date"] >= rows[-1]["date"]
+    last_of_day = {}
+    for r in (rows if newest_first else rows[::-1]):   # first listed row of a day is its last movement
+        last_of_day.setdefault(r["date"], _balance(r["balance"]))
+    db.conn.executemany("INSERT OR REPLACE INTO balance_anchors(account_id, day, balance) VALUES(?,?,?)",
+                        [(account, d, b) for d, b in last_of_day.items()])
+    return len(last_of_day)
+
+
 def _bank_account(db: Database, account_id: str | None) -> str:
     if account_id:
         if not db.conn.execute("SELECT 1 FROM accounts WHERE id=?", (account_id,)).fetchone():
@@ -142,20 +174,21 @@ def _matches(existing: list[dict], row: dict, used: set) -> int | None:
 def import_rows(db: Database, rows: list[dict], account_id: str | None = None) -> dict:
     account = _bank_account(db, account_id)
     existing = [dict(r) for r in db.conn.execute(
-        f"SELECT id, date, amount FROM transactions WHERE account_id=? AND id NOT LIKE '%{MARK}%'", (account,))]
+        f"SELECT id, date, amount, description, duplicate FROM transactions WHERE account_id=?"
+        f" AND id NOT LIKE '%{MARK}%'", (account,))]
     used, added, matched, known = set(), 0, 0, 0
     seen: dict[str, int] = {}
     for row in sorted(rows, key=lambda r: r["date"]):
         key = f"{row['date']}|{row['amount']:.2f}|{row['description']}|{row['balance']}"
         seen[key] = seen.get(key, 0) + 1
         tx_id = f"{account}{MARK}" + hashlib.sha1(f"{key}|{seen[key]}".encode()).hexdigest()[:16]
-        if db.conn.execute("SELECT 1 FROM transactions WHERE id=?", (tx_id,)).fetchone():
-            known += 1
-            continue
         hit = _matches(existing, row, used)
         if hit is not None:
             used.add(hit)
             matched += 1
+            continue
+        if db.conn.execute("SELECT 1 FROM transactions WHERE id=?", (tx_id,)).fetchone():
+            known += 1
             continue
         db.upsert_transaction(dict(id=tx_id, account_id=account, date=row["date"], amount=row["amount"],
                                    description=row["description"], category=UNCATEGORIZED))
@@ -163,8 +196,13 @@ def import_rows(db: Database, rows: list[dict], account_id: str | None = None) -
     from .categorize import categorize_all
     categorize_all(db)
     dates = sorted(r["date"] for r in rows)
+    first, last = (dates[0], dates[-1]) if dates else ("", "")
+    # Entries the bank sync holds inside the export's period but the export does not list.
+    extras = [dict(date=e["date"], amount=e["amount"], description=e["description"])
+              for k, e in enumerate(existing) if k not in used and first <= e["date"] <= last and not e["duplicate"]]
     return dict(account=account, read=len(rows), added=added, already_there=matched + known,
-                first=dates[0] if dates else "", last=dates[-1] if dates else "")
+                first=first, last=last, chain_breaks=check_chain(rows),
+                balance_days=store_anchors(db, account, rows), extras=extras)
 
 
 def import_file(db: Database, path, account_id: str | None = None) -> dict:

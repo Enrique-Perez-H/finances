@@ -66,6 +66,26 @@ class ImportTests(IsolatedHome):
         dup = self.db.conn.execute("SELECT COUNT(*) FROM transactions WHERE duplicate=1").fetchone()[0]
         self.assertEqual(dup, 1)
 
+    def test_balances_become_anchors_for_the_history(self):
+        from datetime import date
+        from finances import history
+        out = importer.import_file(self.db, self.file)
+        self.assertEqual(out["balance_days"], 4)
+        ev = history.evolution(self.db, today=date(2026, 11, 16))
+        by = {r["month"]: r["cash"] for r in ev["rows"]}
+        self.assertEqual(by["2026-06"], 500.0)      # the bank's own figure, whatever else is missing
+
+    def test_chain_check_and_extras(self):
+        rows = importer.parse_export(importer.read_xlsx(self.file))
+        self.assertGreater(importer.check_chain(rows), 0)   # the sample balances were not made consistent
+        good = [dict(date="2026-01-02", amount=-5.0, description="B", balance="95,00€"),
+                dict(date="2026-01-01", amount=100.0, description="A", balance="100,00€")]
+        self.assertEqual(importer.check_chain(good), 0)
+        self.db.upsert_transaction(dict(id="san-9", account_id="san", date="2026-11-15", amount=-99.0,
+                                        description="NOT IN EXPORT", category="uncategorized"))
+        out = importer.import_file(self.db, self.file)
+        self.assertEqual([e["description"] for e in out["extras"]], ["NOT IN EXPORT"])
+
     def test_clear_errors(self):
         bad = self.file.with_name("x.xlsx")
         make_xlsx(bad, [["nothing", "useful"]])

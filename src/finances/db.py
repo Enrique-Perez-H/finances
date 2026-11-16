@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS balance_history (
     balance REAL NOT NULL,
     PRIMARY KEY (day, account_id)
 );
+CREATE TABLE IF NOT EXISTS balance_anchors (
+    account_id TEXT NOT NULL,
+    day TEXT NOT NULL,             -- ISO date
+    balance REAL NOT NULL,         -- the bank's own balance at the end of that day (from an export)
+    PRIMARY KEY (account_id, day)
+);
 CREATE TABLE IF NOT EXISTS account_settings (
     id TEXT PRIMARY KEY,           -- account id
     kind TEXT NOT NULL             -- your choice of type; survives later syncs

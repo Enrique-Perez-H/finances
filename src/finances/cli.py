@@ -221,6 +221,16 @@ def _run(args):
         db.save()
         print(f"Read {out['read']} entries ({out['first']} to {out['last']}): {out['added']} added, "
               f"{out['already_there']} were already there.")
+        if out["balance_days"]:
+            print(f"The bank's own balances for {out['balance_days']} days now anchor the balance history.")
+        if out["chain_breaks"]:
+            print(f"Warning: {out['chain_breaks']} places where the balances do not add up: the export "
+                  "may be missing entries there.")
+        if out["extras"]:
+            print(f"{len(out['extras'])} entries in the app inside that period are not in the export "
+                  "(possible duplicates; check them in the Month tab):")
+            for e in out["extras"][:15]:
+                print(f"  {e['date']}  {e['amount']:>9.2f}  {e['description'][:50]}")
         return 0
     if args.cmd == "recategorize":
         from . import categorize
