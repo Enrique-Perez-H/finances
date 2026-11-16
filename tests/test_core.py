@@ -133,6 +133,9 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b"donut(", self.req("/views/spending.js")[1])
         self.assertIn(b"shareByCategory", self.req("/views/recurring.js")[1])
 
+    def test_recurring_items_have_an_entry_finder(self):
+        self.assertIn(b"function findCard", self.req("/views/recurring.js")[1])
+
     def test_theme_switch_assets(self):
         code, page = self.req("/")
         self.assertIn(b'id="theme"', page)

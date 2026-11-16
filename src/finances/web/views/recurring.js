@@ -3,6 +3,45 @@ import {card, row, el, eur, eur2, get, post, note, button, donut} from '../ui.js
 const CADENCES = ['monthly', 'every two months', 'quarterly', 'semiannual', 'yearly'];
 
 // Everything about an item you marked yourself: rename, change rhythm, name variants, entries.
+// Search all entries (same direction as the item) and add the ones that belong to it.
+// A detected item has no group yet: the first entry you add turns it into an item you manage.
+function findCard(i, reload) {
+  const q = el('input', {placeholder: 'Search entries, e.g. part of the name', className: 'wide', value: i.kind === 'manual' ? '' : (i.key || '')});
+  const out = el('div', {});
+  let groupId = i.group_id ?? null;
+  const run = async () => {
+    out.replaceChildren(note('Searching…'));
+    const params = new URLSearchParams({q: q.value.trim(), direction: i.direction, sort: 'date', limit: 40});
+    const res = await get('/api/entries?' + params);
+    const list = res.items.filter(e => !(e.recurring && e.recurring.group_id === groupId && groupId !== null));
+    out.replaceChildren(...(list.length ? list.map(e => {
+      const r = el('div', {className: 'row'},
+        el('span', {textContent: `${e.date} · ${e.description.slice(0, 26)} · ${eur2(Math.abs(e.amount))}` +
+          (e.recurring ? ` · in "${e.recurring.name}"` : '')}));
+      r.appendChild(button('Add', async () => {
+        try {
+          if (groupId === null) {
+            const cadence = CADENCES.includes(i.cadence) ? i.cadence : 'monthly';
+            groupId = (await post('/api/recurring/manual', {tx_ids: [e.id], name: i.label, cadence})).group_id;
+            if (i.key && i.kind !== 'manual') { try { await post('/api/recurring/manual/pattern', {group_id: groupId, pattern: i.key}); } catch (err) { /* too generic to match by name */ } }
+          } else {
+            await post('/api/recurring/manual', {tx_ids: [e.id], group_id: groupId});
+          }
+          r.replaceChildren(el('span', {className: 'muted', textContent: `Added · ${e.date} · ${e.description.slice(0, 26)}`}));
+        } catch (err) { alert(err.message); }
+      }, 'ghost'));
+      return r;
+    }) : [note('No entries found.')]), button('Done', reload));
+  };
+  const go = button('Search', run);
+  q.addEventListener('keydown', ev => { if (ev.key === 'Enter') run(); });
+  return el('details', {className: 'group'},
+    el('summary', {}, el('span', {textContent: 'Find entries to add'}), el('span', {textContent: i.direction === 'in' ? 'money in' : 'money out'})),
+    note(i.kind === 'manual' ? 'Pick entries that belong to this item, even if their text differs.'
+      : 'Adding an entry here turns this into an item you manage (rename, change rhythm, remove entries).'),
+    q, go, out);
+}
+
 function manageCard(i, reload) {
   const name = el('input', {value: i.label, className: 'wide'});
   const cadence = el('select', {className: 'picker'}, ...CADENCES.map(c => el('option', {value: c, textContent: c, selected: c === i.cadence})));
@@ -42,7 +81,7 @@ const item = (i, reload) => {
       row(`↻ ${i.label}`, i.occurrences ? `~${eur2(i.monthly_equivalent)}/mo` : 'no entries yet', i.direction === 'in' ? 'pos' : ''),
       note(['set by you', i.cadence, i.variable ? `amount varies ${eur2(i.amount_min)} to ${eur2(i.amount_max)}` : '',
         i.next_date ? `next ~${i.next_date}` : ''].filter(Boolean).join(' · ')),
-      manageCard(i, reload));
+      manageCard(i, reload), findCard(i, reload));
   }
   const detail = [i.category];
   if (i.kind === 'presence') detail.push(`appears most months, no fixed day · ${i.months_seen}`);
@@ -52,6 +91,7 @@ const item = (i, reload) => {
     row(i.label.slice(0, 34), i.kind === 'presence' ? `~${eur2(i.monthly_equivalent)}/mo`
       : `${eur2(i.typical_amount)} ${i.cadence}`, i.direction === 'in' ? 'pos' : ''),
     note(detail.join(' · ')),
+    findCard(i, reload),
     button('Not recurring', async () => { await post('/api/recurring/ignore', {key: i.key, direction: i.direction}); reload(); }, 'ghost'));
 };
 
