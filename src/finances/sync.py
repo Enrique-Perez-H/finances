@@ -1,6 +1,6 @@
 import contextlib
 
-from . import history, tricount
+from . import history, importer, tricount
 from .categorize import categorize_all
 from .connectors import REGISTRY
 from .connectors.base import ConnectorError, NeedsInput, Skipped
@@ -66,6 +66,7 @@ def run_sync(db: Database, secrets: dict, names: list[str], inputs: dict | None 
                 db.upsert_transaction(t)
             for account_id, rows in snap.holdings.items():
                 db.replace_holdings(account_id, rows)
+            importer.reconcile(db)
             categorize_all(db)
             history.snapshot(db)
             db.save()

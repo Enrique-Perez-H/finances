@@ -28,6 +28,9 @@ def main(argv=None):
     rs.add_argument("--force", action="store_true", help="replace an existing vault (it is kept aside)")
     ex = sub.add_parser("recurring", help="explain why a payee is or is not detected as recurring")
     ex.add_argument("text", help="part of the description, e.g. limpiezas")
+    im = sub.add_parser("import", help="add older entries from your Santander Excel export (read locally)")
+    im.add_argument("file")
+    im.add_argument("--account", default=None, help="account id, only needed if you have several banks")
     sub.add_parser("shortcut", help="create a home-screen shortcut for Termux:Widget that starts the dashboard")
     rl = sub.add_parser("rules", help="list your own category rules (or delete one)")
     rl.add_argument("--delete", metavar="PATTERN")
@@ -210,6 +213,14 @@ def _run(args):
                 " WHERE amount < -1000 AND paired_with='' ORDER BY amount LIMIT 15"):
             print(f"{r['date']} {r['amount']:>10.2f}  {r['category']:<18} {r['cat_source'] or 'auto':<9} "
                   f"{r['description'][:60]}")
+        return 0
+    if args.cmd == "import":
+        from . import importer
+        db = Database(passphrase)
+        out = importer.import_file(db, args.file, args.account)
+        db.save()
+        print(f"Read {out['read']} entries ({out['first']} to {out['last']}): {out['added']} added, "
+              f"{out['already_there']} were already there.")
         return 0
     if args.cmd == "recategorize":
         from . import categorize
